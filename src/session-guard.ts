@@ -1,33 +1,43 @@
 /**
- * Duty-session lifecycle guard: pure rotation policy and event-slicing
- * helpers, deliberately free of any dsh imports so they run under plain
- * `node --test` (Node >=22.18 type stripping, no dependencies).
+ * Duty-session lifecycle guard: pure rotation policy, event-tail slicing, and
+ * usage extraction helpers — deliberately free of any dsh imports so they run
+ * under plain `node --test` (Node >=22.18 type stripping, no dependencies).
  *
- * Why the thresholds exist: the 2026-09-02 archived duty session reached
- * 29,755 events (41.8 MB uncompressed) — one long-lived session absorbing
- * every Telegram turn with no rotation — which is the context blow-up
- * failure mode this guard prevents.
+ * Why the thresholds exist (harness LXC evidence, 2026-09-02 archive):
+ * the duty session reached 29,755 events / 41.8 MB uncompressed, its LAST
+ * turn ended with `CONTEXT_WINDOW_EXCEEDED` (glm-5.3-flash) after 133 turns,
+ * and its largest recorded inputTokens was 598,312 — every turn near the end
+ * paid ~600K input tokens. Rotation must therefore be TOKEN-AWARE first;
+ * turns/events are secondary structural axes.
  * @module @luzhengyangtx/dsh-telegram-duty/session-guard
  */
 
-/** Rotation thresholds; a numeric limit of `0` means "unlimited". */
+/** Rotation thresholds; a numeric limit of `0` means "unlimited / off". */
 export interface RotationThresholds {
   /** Rotate after this many delivered turns into the duty session. */
   maxTurnsPerSession?: number
   /** Rotate when the duty session event log reaches this length. */
   maxSessionEvents?: number
+  /**
+   * Rotate when the last recorded inputTokens reaches this. The PRIMARY
+   * cost guard: every turn before rotation pays ~this many input tokens.
+   */
+  maxContextTokens?: number
   /** Master switch; when false, never rotate. */
   autoRotate?: boolean
 }
 
 export const DEFAULT_MAX_TURNS_PER_SESSION = 200
 export const DEFAULT_MAX_SESSION_EVENTS = 5000
+export const DEFAULT_MAX_CONTEXT_TOKENS = 400000
 
 export interface RotationInput {
   /** Delivered duty turns since the last rotation. */
   turns: number
   /** Current length of the duty session event log, when known. */
   eventCount?: number
+  /** Latest usage.inputTokens observed in the session, when known. */
+  lastInputTokens?: number
 }
 
 /**
@@ -42,6 +52,10 @@ export function shouldRotate(input: RotationInput, thresholds: RotationThreshold
   if (input.eventCount !== undefined && input.eventCount >= 0) {
     const maxEvents = thresholds.maxSessionEvents ?? DEFAULT_MAX_SESSION_EVENTS
     if (maxEvents > 0 && input.eventCount >= maxEvents) return true
+  }
+  if (input.lastInputTokens !== undefined && input.lastInputTokens >= 0) {
+    const maxTokens = thresholds.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS
+    if (maxTokens > 0 && input.lastInputTokens >= maxTokens) return true
   }
   return false
 }
@@ -67,6 +81,55 @@ function lowerBoundSeq(events: ReadonlyArray<{ seq: number }>, firstSeq: number)
  */
 export function sliceFromSeq<T extends { seq: number }>(events: ReadonlyArray<T>, firstSeq: number): ReadonlyArray<T> {
   return events.slice(lowerBoundSeq(events, firstSeq))
+}
+
+/**
+ * Last usage.inputTokens recorded in the given events. dsh emits usage as
+ * `assistant/chunk` events: `data.chunk = { type: 'usage', usage: {
+ * inputTokens, outputTokens } }`. Accepts plain unknown rows so tests can
+ * pass minimal fixtures and the driver can pass real SessionEvents.
+ */
+export function extractLastUsageInputTokens(events: ReadonlyArray<unknown>): number | undefined {
+  let last: number | undefined
+  for (const event of events) {
+    const e = event as { type?: string; data?: { chunk?: { type?: string; usage?: { inputTokens?: number } } } }
+    if (e?.type !== 'assistant/chunk') continue
+    const usage = e.data?.chunk?.usage
+    if (usage !== undefined && typeof usage.inputTokens === 'number') last = usage.inputTokens
+  }
+  return last
+}
+
+/** Largest usage.inputTokens in the given events (cost high-water mark). */
+export function extractMaxUsageInputTokens(events: ReadonlyArray<unknown>): number | undefined {
+  let max: number | undefined
+  for (const event of events) {
+    const e = event as { type?: string; data?: { chunk?: { type?: string; usage?: { inputTokens?: number } } } }
+    if (e?.type !== 'assistant/chunk') continue
+    const usage = e.data?.chunk?.usage
+    if (usage !== undefined && typeof usage.inputTokens === 'number') {
+      if (max === undefined || usage.inputTokens > max) max = usage.inputTokens
+    }
+  }
+  return max
+}
+
+/** Last non-empty assistant reply text in the given events (handoff source). */
+export function extractLastAssistantText(events: ReadonlyArray<unknown>): string {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const raw = events[i]
+    if (raw === undefined) continue
+    const e = raw as { type?: string; data?: { message?: { content?: ReadonlyArray<{ type?: string; text?: unknown }> } } }
+    if (e?.type !== 'assistant/message') continue
+    const content = e.data?.message?.content
+    if (content === undefined) continue
+    const text = content
+      .filter(block => block.type === 'text')
+      .map(block => String(block.text ?? ''))
+      .join('')
+    if (text.trim() !== '') return text
+  }
+  return ''
 }
 
 /**
