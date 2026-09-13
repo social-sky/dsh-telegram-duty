@@ -23,6 +23,7 @@ import { chunkText, isBareTargetPrefix, parseCommand, parseSessionCallback, pars
 import { Targeting, displayTitle } from './targeting.ts'
 import type { SessionItem } from './targeting.ts'
 import { scanPendingApprovals } from './pending.ts'
+import { sessionEventsOf } from './session-guard.ts'
 import { stringsFor } from './i18n.ts'
 import type { Strings } from './i18n.ts'
 
@@ -392,7 +393,7 @@ export class Gateway {
         if (this.isDutySession(id)) continue
         items.push({
           sessionId: id,
-          title: displayTitle(id, agent.session.events, false, this.strings.dutySessionName),
+          title: displayTitle(id, sessionEventsOf(agent.session) as readonly SessionEvent[], false, this.strings.dutySessionName),
           status: agent.status,
         })
       }
@@ -429,10 +430,10 @@ export class Gateway {
         if (live !== undefined) {
           // Blank (never-used) live sessions are drafts; the web sidebar
           // hides them too, so keep the phone list clean.
-          if (live.session.events.length === 0) continue
+          if (sessionEventsOf(live.session).length === 0) continue
           items.push({
             sessionId: id,
-            title: displayTitle(id, live.session.events, false, this.strings.dutySessionName),
+            title: displayTitle(id, sessionEventsOf(live.session) as readonly SessionEvent[], false, this.strings.dutySessionName),
             status: live.status,
           })
           continue
@@ -479,10 +480,10 @@ export class Gateway {
   private async warnPendingWebApprovals(): Promise<void> {
     const lines: string[] = []
     for (const agent of this.ctx.agents.list()) {
-      const pending = scanPendingApprovals(agent.session.events)
+      const pending = scanPendingApprovals(sessionEventsOf(agent.session) as readonly SessionEvent[])
       if (pending.length === 0) continue
       const id = String(agent.id)
-      const title = displayTitle(id, agent.session.events, this.isDutySession(id), this.strings.dutySessionName)
+      const title = displayTitle(id, sessionEventsOf(agent.session) as readonly SessionEvent[], this.isDutySession(id), this.strings.dutySessionName)
       for (const item of pending) lines.push(`· 工具「${item.toolName}」（${title}）`)
     }
     if (lines.length > 0) await this.sendChunked(this.strings.pendingWebApprovals(lines.join('\n')))
@@ -496,7 +497,7 @@ export class Gateway {
   private async handleUnblockCommand(): Promise<void> {
     let cancelled = 0
     for (const agent of this.ctx.agents.list()) {
-      if (scanPendingApprovals(agent.session.events).length === 0) continue
+      if (scanPendingApprovals(sessionEventsOf(agent.session) as readonly SessionEvent[]).length === 0) continue
       agent.cancel({ kind: 'user' })
       cancelled += 1
       this.ctx.logger.info('telegram-duty', `unblock: cancelled turn of session ${String(agent.id)}`)
