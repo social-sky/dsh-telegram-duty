@@ -29,7 +29,13 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { TextBlock } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { buildHandoffSummary, shouldRotate, sliceFromSeq } from './session-guard.ts'
+import {
+  buildHandoffSummary,
+  extractLastAssistantText,
+  extractLastUsageInputTokens,
+  shouldRotate,
+  sliceFromSeq,
+} from './session-guard.ts'
 
 /**
  * Message source marking phone-injected user messages. The duty session's own
@@ -69,6 +75,13 @@ export interface SessionDriverOptions {
   maxSessionEvents?: number
   /** Master switch for automatic rotation; false keeps one ever-growing session. */
   autoRotate?: boolean
+  /**
+   * Rotate when the last recorded usage.inputTokens reaches this (0 = off).
+   * Primary cost guard: every turn before rotation pays ~this many input
+   * tokens. Harness evidence: peak 598,312 inputTokens, final turn died
+   * with CONTEXT_WINDOW_EXCEEDED (glm-5.3-flash).
+   */
+  maxContextTokens?: number
 }
 
 /**
@@ -121,6 +134,10 @@ export class SessionDriver {
   private rotationCount = 0
   /** Summary carried into the successor session's system prompt on its first mount. */
   private pendingSummary: string | undefined
+  /** Latest observed usage.inputTokens (undefined until first usage chunk). */
+  private lastInputTokens: number | undefined
+  /** One-time full-log usage baseline flag, per rotation cycle. */
+  private usageScanned = false
 
   constructor(
     ctx: Context,
@@ -267,8 +284,24 @@ export class SessionDriver {
   }
 
   private async turn(sessionId: string, text: string): Promise<TurnOutcome> {
-    const isDuty = sessionId === this.currentDutySessionId()
-    const { agent, dispose } = await this.attach(sessionId, isDuty)
+    let isDuty = sessionId === this.currentDutySessionId()
+    let attached = await this.attach(sessionId, isDuty)
+    if (isDuty && !this.usageScanned) {
+      // One-time per-cycle baseline: read the LAST usage chunk from the whole
+      // event log (CPU-only, no API cost) so an oversized INHERITED session
+      // rotates BEFORE paying one oversized LLM input.
+      this.lastInputTokens = extractLastUsageInputTokens(attached.agent.session.events)
+      this.usageScanned = true
+      if (this.rotateNow(attached.agent)) {
+        const handoff = buildHandoffSummary(extractLastAssistantText(attached.agent.session.events), this.turnsOnDuty)
+        this.performRotation(handoff, attached.agent)
+        await attached.dispose()
+        sessionId = this.currentDutySessionId()
+        isDuty = true
+        attached = await this.attach(sessionId, isDuty)
+      }
+    }
+    const { agent, dispose } = attached
     try {
       await agent.whenIdle()
       const firstSeq = agent.session.seq
@@ -279,8 +312,13 @@ export class SessionDriver {
       await agent.whenIdle()
       // O(log n + delta): slice the tail at firstSeq instead of rescanning the
       // whole ever-growing event array every turn.
-      const outcome = summarize(sliceFromSeq(agent.session.events, firstSeq), firstSeq)
-      if (isDuty) this.maybeRotate(agent, outcome)
+      const tail = sliceFromSeq(agent.session.events, firstSeq)
+      const outcome = summarize(tail, firstSeq)
+      if (isDuty) {
+        const used = extractLastUsageInputTokens(tail)
+        if (used !== undefined) this.lastInputTokens = used
+        this.maybeRotate(agent, outcome)
+      }
       return outcome
     } finally {
       // Release our own handle when we created one; a live foreign agent stays.
@@ -295,26 +333,43 @@ export class SessionDriver {
    * fresh id, the create path runs setup, and setup consumes the handoff
    * summary into the successor system prompt.
    */
-  private maybeRotate(agent: Agent, outcome: TurnOutcome): void {
-    this.turnsOnDuty += 1
-    const rotate = shouldRotate(
-      { turns: this.turnsOnDuty, eventCount: agent.session.events.length },
+  /** Rotation decision against ALL axes (turns / events / tokens). */
+  private rotateNow(agent: Agent): boolean {
+    return shouldRotate(
+      {
+        turns: this.turnsOnDuty,
+        eventCount: agent.session.events.length,
+        lastInputTokens: this.lastInputTokens,
+      },
       {
         maxTurnsPerSession: this.options.maxTurnsPerSession,
         maxSessionEvents: this.options.maxSessionEvents,
+        maxContextTokens: this.options.maxContextTokens,
         autoRotate: this.options.autoRotate,
       },
     )
-    if (!rotate) return
+  }
+
+  /** Switch to a fresh -rN successor; caller supplies the handoff summary. */
+  private performRotation(summary: string, agent: Agent, outcome?: TurnOutcome): void {
     this.rotationCount += 1
     const successor = `${this.options.dutySessionId}-r${this.rotationCount}`
-    this.pendingSummary = buildHandoffSummary(outcome.text, this.turnsOnDuty)
+    this.pendingSummary = summary
+    const tokenNote = this.lastInputTokens === undefined ? '' : `, inputTokens=${this.lastInputTokens}`
     this.ctx.logger.info(
       'telegram-duty',
-      `duty session rotation: "${this.currentDutyId}" -> "${successor}" after ${this.turnsOnDuty} turns (events=${agent.session.events.length})`,
+      `duty session rotation: "${this.currentDutyId}" -> "${successor}" after ${this.turnsOnDuty} turns (events=${agent.session.events.length}${tokenNote})`,
     )
     this.currentDutyId = successor
     this.turnsOnDuty = 0
-    outcome.rotatedTo = successor
+    this.usageScanned = false
+    this.lastInputTokens = undefined
+    if (outcome !== undefined) outcome.rotatedTo = successor
+  }
+
+  private maybeRotate(agent: Agent, outcome: TurnOutcome): void {
+    this.turnsOnDuty += 1
+    if (!this.rotateNow(agent)) return
+    this.performRotation(buildHandoffSummary(outcome.text, this.turnsOnDuty), agent, outcome)
   }
 }
