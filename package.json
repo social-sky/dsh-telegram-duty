@@ -1,7 +1,7 @@
 {
   "name": "@luzhengyangtx/dsh-telegram-duty",
   "description": "Telegram duty gateway for DeepSeek Harness: long-poll Telegram into a dedicated duty session, global approval forwarding while on duty, and a local/duty watch toggle.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "keywords": [
     "deepseek",
     "deepseek-harness",
@@ -53,7 +53,9 @@
   "license": "MIT",
   "scripts": {
     "build": "tsc -b tsconfig.json && tsc -b tsconfig.client.json && tsdown --env.DSH_BUILD_FACE client",
-    "typecheck": "tsc -b tsconfig.json --force && tsc -b tsconfig.client.json --force"
+    "typecheck": "tsc -b tsconfig.json --force && tsc -b tsconfig.client.json --force",
+    "test": "node --test tests/session-guard.test.mjs",
+    "check": "node scripts/check-compat.mjs && node --test tests/session-guard.test.mjs"
   },
   "dsh": {
     "bundle": {
