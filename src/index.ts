@@ -158,7 +158,11 @@ async function mount(ctx: Context, config: TelegramDutyConfig): Promise<void> {
         return { kind: 'success' }
       },
     })
-    gateway.start()
+    // Defer start: refreshStateMarker writes settings while composition is
+    // still in flight, which can trigger a row reload and kill the pending
+    // ctx.inject calls below (observed on dsh 0.1.5-rc.1: 'cannot create
+    // effect on inactive context' during Fiber._reload).
+    queueMicrotask(() => gateway.start())
     yield async () => {
       await gateway.stop()
     }
@@ -167,20 +171,28 @@ async function mount(ctx: Context, config: TelegramDutyConfig): Promise<void> {
   // Duty-session marker projection: surfaces `telegramDuty` in session.list
   // so the web sidebar button can locate the duty session. The unit child
   // activates only when a projection registry is composed.
-  ctx.inject(['sessionProjections'], (projectionCtx) => {
-    projectionCtx.sessionProjections.register(telegramDutyProjection())
-  })
+  try {
+    ctx.inject(['sessionProjections'], (projectionCtx) => {
+      projectionCtx.sessionProjections.register(telegramDutyProjection())
+    })
+  } catch (error) {
+    ctx.logger.warn('telegram-duty', `sessionProjections inject failed (sidebar button degraded): ${error instanceof Error ? error.message : String(error)}`)
+  }
 
   // Teach every session's agent about the phone channels (proactive push +
   // interactive questions); the section activates only when a system-prompt
   // service is composed.
-  ctx.inject(['systemPrompt'], (promptCtx) => {
-    promptCtx.systemPrompt.context({
-      name: 'telegram-duty:phone-tools',
-      order: 115,
-      text: () => stringsFor(settings.get().language ?? 'en').promptNote,
+  try {
+    ctx.inject(['systemPrompt'], (promptCtx) => {
+      promptCtx.systemPrompt.context({
+        name: 'telegram-duty:phone-tools',
+        order: 115,
+        text: () => stringsFor(settings.get().language ?? 'en').promptNote,
+      })
     })
-  })
+  } catch (error) {
+    ctx.logger.warn('telegram-duty', `systemPrompt inject failed (phone-tools note degraded): ${error instanceof Error ? error.message : String(error)}`)
+  }
 
   // Validate token + proxy in the background; the poller keeps retrying anyway.
   void client.getMe().then(
