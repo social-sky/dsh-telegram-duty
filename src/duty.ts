@@ -300,7 +300,11 @@ export class SessionDriver {
       await attached.agent.whenIdle()
       this.lastInputTokens = extractLastUsageInputTokens(sessionEventsOf(attached.agent.session))
       this.usageScanned = true
-      if (this.rotateNow(attached.agent, await this.resolveMaxContextTokens())) {
+      const baselineTokens = await this.measureContextTokens(attached.agent)
+      if (baselineTokens === undefined) {
+        this.ctx.logger.warn('telegram-duty', 'token measurement unavailable (no tokenMeter, no usage in log) — token rotation axis INACTIVE for this cycle')
+      }
+      if (this.rotateNow(attached.agent, await this.resolveMaxContextTokens(), baselineTokens)) {
         const handoff = buildHandoffSummary(extractLastAssistantText(sessionEventsOf(attached.agent.session)), this.turnsOnDuty)
         this.performRotation(handoff, attached.agent)
         await attached.dispose()
@@ -325,7 +329,8 @@ export class SessionDriver {
       if (isDuty) {
         const used = extractLastUsageInputTokens(tail)
         if (used !== undefined) this.lastInputTokens = used
-        this.maybeRotate(agent, outcome, await this.resolveMaxContextTokens())
+        const contextTokens = await this.measureContextTokens(agent)
+        this.maybeRotate(agent, outcome, await this.resolveMaxContextTokens(), contextTokens)
       }
       return outcome
     } finally {
@@ -369,13 +374,33 @@ export class SessionDriver {
     return window === undefined ? cap : Math.min(cap, Math.floor(window * 0.75))
   }
 
+  /**
+   * Current context size in tokens. Prefers the host tokenMeter (the same
+   * yardstick compaction-basic uses: measure(session).totalTokens); falls back
+   * to the usage value harvested from the event log. Never throws.
+   */
+  private async measureContextTokens(agent: Agent): Promise<number | undefined> {
+    const meter = this.ctx.get('tokenMeter') as { measure?: (session: unknown) => { totalTokens?: number } | undefined } | undefined
+    if (meter !== undefined && typeof meter.measure === 'function') {
+      try {
+        const measured = meter.measure(agent.session)
+        if (measured !== undefined && typeof measured.totalTokens === 'number' && measured.totalTokens > 0) {
+          return measured.totalTokens
+        }
+      } catch {
+        // fall through to the log-derived value
+      }
+    }
+    return this.lastInputTokens
+  }
+
   /** Rotation decision against ALL axes (turns / events / tokens). */
-  private rotateNow(agent: Agent, maxContextTokens: number): boolean {
+  private rotateNow(agent: Agent, maxContextTokens: number, contextTokens: number | undefined): boolean {
     return shouldRotate(
       {
         turns: this.turnsOnDuty,
         eventCount: sessionEventCount(agent.session),
-        lastInputTokens: this.lastInputTokens,
+        lastInputTokens: contextTokens,
       },
       {
         maxTurnsPerSession: this.options.maxTurnsPerSession,
@@ -403,9 +428,9 @@ export class SessionDriver {
     if (outcome !== undefined) outcome.rotatedTo = successor
   }
 
-  private maybeRotate(agent: Agent, outcome: TurnOutcome, maxContextTokens: number): void {
+  private maybeRotate(agent: Agent, outcome: TurnOutcome, maxContextTokens: number, contextTokens: number | undefined): void {
     this.turnsOnDuty += 1
-    if (!this.rotateNow(agent, maxContextTokens)) return
+    if (!this.rotateNow(agent, maxContextTokens, contextTokens)) return
     this.performRotation(buildHandoffSummary(outcome.text, this.turnsOnDuty), agent, outcome)
   }
 }
