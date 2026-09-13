@@ -79,7 +79,8 @@ function lowerBoundSeq(events: ReadonlyArray<{ seq: number }>, firstSeq: number)
  * O(n^2) across a long duty session. Slicing first turns that into
  * O(log n + delta) while summarize() itself stays unchanged.
  */
-export function sliceFromSeq<T extends { seq: number }>(events: ReadonlyArray<T>, firstSeq: number): ReadonlyArray<T> {
+export function sliceFromSeq<T extends { seq: number }>(events: ReadonlyArray<T> | unknown, firstSeq: number): ReadonlyArray<T> {
+  if (!Array.isArray(events)) return []
   return events.slice(lowerBoundSeq(events, firstSeq))
 }
 
@@ -89,7 +90,58 @@ export function sliceFromSeq<T extends { seq: number }>(events: ReadonlyArray<T>
  * inputTokens, outputTokens } }`. Accepts plain unknown rows so tests can
  * pass minimal fixtures and the driver can pass real SessionEvents.
  */
-export function extractLastUsageInputTokens(events: ReadonlyArray<unknown>): number | undefined {
+/**
+ * Structural view of one dsh Session's event log. dsh 0.1.5-rc.1 exposes
+ * `snapshotEvents()` (canonical) and no `events` property at all; rc.2-era
+ * builds exposed an `events` array. These accessors work on both, so the
+ * plugin no longer depends on a property that rc.1 removed.
+ */
+interface SessionEventsLike {
+  events?: unknown
+  snapshotEvents?: (fromSeq?: number, toSeqExclusive?: number) => unknown
+  seq?: number
+}
+
+/** All events of one session (frozen snapshot), empty when unavailable. */
+export function sessionEventsOf(session: unknown): readonly unknown[] {
+  const s = session as SessionEventsLike | undefined
+  if (s === undefined) return []
+  const snapshot = s.snapshotEvents
+  if (typeof snapshot === 'function') {
+    try {
+      const taken = snapshot.call(s)
+      if (Array.isArray(taken)) return taken
+    } catch {
+      // fall through to the legacy property
+    }
+  }
+  return Array.isArray(s.events) ? s.events : []
+}
+
+/** Event count of one session: rc.1 `seq` is the log end, else array length. */
+export function sessionEventCount(session: unknown): number {
+  const s = session as SessionEventsLike | undefined
+  if (s !== undefined && typeof s.seq === 'number') return s.seq
+  return sessionEventsOf(session).length
+}
+
+/** Events from fromSeq to the end (rc.1 range snapshot, else tail slice). */
+export function sessionEventsFrom(session: unknown, fromSeq: number): readonly unknown[] {
+  const s = session as SessionEventsLike | undefined
+  const snapshot = s?.snapshotEvents
+  if (typeof snapshot === 'function') {
+    try {
+      const taken = snapshot.call(s, fromSeq)
+      if (Array.isArray(taken)) return taken
+    } catch {
+      // fall through
+    }
+  }
+  return sliceFromSeq(sessionEventsOf(session) as ReadonlyArray<{ seq: number }>, fromSeq)
+}
+
+export function extractLastUsageInputTokens(events: unknown): number | undefined {
+  if (!Array.isArray(events)) return undefined
   let last: number | undefined
   for (const event of events) {
     const e = event as { type?: string; data?: { chunk?: { type?: string; usage?: { inputTokens?: number } } } }
@@ -101,7 +153,8 @@ export function extractLastUsageInputTokens(events: ReadonlyArray<unknown>): num
 }
 
 /** Largest usage.inputTokens in the given events (cost high-water mark). */
-export function extractMaxUsageInputTokens(events: ReadonlyArray<unknown>): number | undefined {
+export function extractMaxUsageInputTokens(events: unknown): number | undefined {
+  if (!Array.isArray(events)) return undefined
   let max: number | undefined
   for (const event of events) {
     const e = event as { type?: string; data?: { chunk?: { type?: string; usage?: { inputTokens?: number } } } }
@@ -115,7 +168,8 @@ export function extractMaxUsageInputTokens(events: ReadonlyArray<unknown>): numb
 }
 
 /** Last non-empty assistant reply text in the given events (handoff source). */
-export function extractLastAssistantText(events: ReadonlyArray<unknown>): string {
+export function extractLastAssistantText(events: unknown): string {
+  if (!Array.isArray(events)) return ''
   for (let i = events.length - 1; i >= 0; i--) {
     const raw = events[i]
     if (raw === undefined) continue
