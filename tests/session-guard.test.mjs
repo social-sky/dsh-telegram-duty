@@ -3,9 +3,13 @@ import assert from 'node:assert/strict'
 import {
   DEFAULT_MAX_TURNS_PER_SESSION,
   DEFAULT_MAX_SESSION_EVENTS,
+  DEFAULT_MAX_CONTEXT_TOKENS,
   shouldRotate,
   sliceFromSeq,
   buildHandoffSummary,
+  extractLastUsageInputTokens,
+  extractMaxUsageInputTokens,
+  extractLastAssistantText,
   HANDOFF_SUMMARY_CAP,
 } from '../src/session-guard.ts'
 
@@ -42,6 +46,34 @@ test('shouldRotate: never rotates on nonsensical input', () => {
   assert.equal(shouldRotate({ turns: 3, eventCount: -1 }), false)
 })
 
+// --- shouldRotate: token axis (the primary cost guard) ---
+
+test('shouldRotate: token axis trips at the default ceiling', () => {
+  assert.equal(shouldRotate({ turns: 1, eventCount: 10, lastInputTokens: DEFAULT_MAX_CONTEXT_TOKENS - 1 }), false)
+  assert.equal(shouldRotate({ turns: 1, eventCount: 10, lastInputTokens: DEFAULT_MAX_CONTEXT_TOKENS }), true)
+})
+
+test('shouldRotate: token axis uses real-observed 598K case', () => {
+  // The archived session peaked at 598,312 inputTokens — must rotate.
+  assert.equal(shouldRotate({ turns: 1, lastInputTokens: 598312 }), true)
+})
+
+test('shouldRotate: maxContextTokens=0 disables the token axis', () => {
+  const t = { maxContextTokens: 0 }
+  assert.equal(shouldRotate({ turns: 1, lastInputTokens: 999999 }, t), false)
+})
+
+test('shouldRotate: custom token threshold', () => {
+  const t = { maxContextTokens: 100000 }
+  assert.equal(shouldRotate({ turns: 1, lastInputTokens: 99999 }, t), false)
+  assert.equal(shouldRotate({ turns: 1, lastInputTokens: 100000 }, t), true)
+})
+
+test('shouldRotate: token axis fires even when other axes are unlimited', () => {
+  const t = { maxTurnsPerSession: 0, maxSessionEvents: 0 }
+  assert.equal(shouldRotate({ turns: 0, eventCount: 0, lastInputTokens: DEFAULT_MAX_CONTEXT_TOKENS }, t), true)
+})
+
 // --- sliceFromSeq: binary-search tail slicing ---
 
 const evts = (seqs) => seqs.map((seq) => ({ seq }))
@@ -73,6 +105,65 @@ test('sliceFromSeq: absent firstSeq falls to the next existing seq', () => {
 test('sliceFromSeq: single event below boundary', () => {
   assert.deepEqual(sliceFromSeq(evts([1]), 2), [])
   assert.deepEqual(sliceFromSeq(evts([2]), 2), evts([2]))
+})
+
+// --- usage extraction (real dsh event shape: assistant/chunk -> data.chunk.usage) ---
+
+const usageChunk = (inputTokens, seq) => ({
+  type: 'assistant/chunk',
+  seq,
+  data: { turn: 1, step: 1, chunk: { type: 'usage', usage: { inputTokens, outputTokens: 100 } } },
+})
+
+test('extractLastUsageInputTokens: returns the last usage chunk value', () => {
+  const events = [usageChunk(1000, 1), usageChunk(2000, 2), usageChunk(3000, 3)]
+  assert.equal(extractLastUsageInputTokens(events), 3000)
+})
+
+test('extractLastUsageInputTokens: ignores non-usage events and non-usage chunks', () => {
+  const events = [
+    { type: 'user/message', seq: 1, data: { source: { kind: 'plugin', plugin: 'telegram-duty' } } },
+    { type: 'assistant/chunk', seq: 2, data: { chunk: { type: 'text', text: 'hi' } } },
+    usageChunk(5000, 3),
+  ]
+  assert.equal(extractLastUsageInputTokens(events), 5000)
+})
+
+test('extractLastUsageInputTokens: no usage at all -> undefined', () => {
+  assert.equal(extractLastUsageInputTokens([]), undefined)
+  assert.equal(extractLastUsageInputTokens([{ type: 'turn/start', seq: 1, data: {} }]), undefined)
+})
+
+test('extractMaxUsageInputTokens: high-water mark across the whole log', () => {
+  const events = [usageChunk(1000, 1), usageChunk(598312, 2), usageChunk(200000, 3)]
+  assert.equal(extractMaxUsageInputTokens(events), 598312)
+})
+
+// --- assistant text extraction ---
+
+const assistantMsg = (text, seq) => ({
+  type: 'assistant/message',
+  seq,
+  data: { message: { content: [{ type: 'text', text }] } },
+})
+
+test('extractLastAssistantText: returns the LAST non-empty assistant text', () => {
+  const events = [assistantMsg('first', 1), assistantMsg('', 2), assistantMsg('second', 3)]
+  assert.equal(extractLastAssistantText(events), 'second')
+})
+
+test('extractLastAssistantText: joins multiple text blocks of one message', () => {
+  const events = [{
+    type: 'assistant/message',
+    seq: 1,
+    data: { message: { content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] } },
+  }]
+  assert.equal(extractLastAssistantText(events), 'ab')
+})
+
+test('extractLastAssistantText: no assistant text -> empty string', () => {
+  assert.equal(extractLastAssistantText([]), '')
+  assert.equal(extractLastAssistantText([{ type: 'user/message', seq: 1, data: {} }]), '')
 })
 
 // --- buildHandoffSummary ---
