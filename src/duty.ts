@@ -5,6 +5,17 @@
  * same flow against any other session id (`runIn`), and `ensureLive` attaches
  * the duty session without a turn (the web sidebar button entry point). The
  * resume/create + summarize pattern follows @kriskwok/dsh-feishu-gateway (MIT).
+ *
+ * Rotation (2026-09-13): the duty session used to grow without bound — the
+ * 2026-09-02 archive reached 29,755 events (41.8 MB uncompressed) and every
+ * turn rescanned the FULL event array (O(n) per turn, O(n^2) overall). The
+ * driver now tracks its own "current duty session id", rotates to a fresh
+ * `-rN` successor when the turn/event thresholds from session-guard are hit,
+ * carries a handoff summary into the successor system prompt, and slices the
+ * event tail before summarize() (O(log n + delta) per turn). Rotation state
+ * is in-memory: after a dsh restart the driver returns to the base session,
+ * but the event-count threshold then re-rotates on the FIRST turn, so an
+ * oversized base session self-heals instead of wedging.
  * @module @luzhengyangtx/dsh-telegram-duty/duty
  */
 
@@ -18,6 +29,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { TextBlock } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { buildHandoffSummary, shouldRotate, sliceFromSeq } from './session-guard.ts'
 
 /**
  * Message source marking phone-injected user messages. The duty session's own
@@ -34,18 +46,29 @@ export interface TurnOutcome {
   error?: string
   /** True when the turn was aborted (e.g. /unblock or a web-side cancel). */
   cancelled?: boolean
+  /**
+   * Set on a duty turn that triggered rotation: the session id the NEXT duty
+   * turn will use. Informational (the driver logs the handoff itself).
+   */
+  rotatedTo?: string
 }
 
 /** Error marker for a targeted session that could not be resumed. */
 export const TARGET_OFFLINE_ERROR = 'OFFLINE'
 
 export interface SessionDriverOptions {
-  /** Stable duty session id (created on first delivery when absent). */
+  /** Stable duty session id base (created on first delivery when absent). Rotated successors get `-rN` suffixes. */
   dutySessionId: string
   /** Absolute workspace cwd for the duty session. */
   cwd: string
   /** Persona text registered under the deployment persona slot (duty only). */
   persona: string
+  /** Rotate the duty session after this many turns (0 = unlimited turns). */
+  maxTurnsPerSession?: number
+  /** Rotate when the duty session event log reaches this length (0 = unlimited). */
+  maxSessionEvents?: number
+  /** Master switch for automatic rotation; false keeps one ever-growing session. */
+  autoRotate?: boolean
 }
 
 /**
@@ -88,11 +111,26 @@ export function summarize(events: readonly SessionEvent[], firstSeq: number): Tu
 export class SessionDriver {
   private chain: Promise<unknown> = Promise.resolve()
   private presetPromise: Promise<string | undefined> | undefined
+  /** The duty session id the NEXT duty delivery attaches to; `-rN` after rotations. */
+  private currentDutyId: string
+  /** Delivered duty turns since the last rotation. */
+  private turnsOnDuty = 0
+  /** Monotonic rotation counter backing the `-rN` successor suffixes. */
+  private rotationCount = 0
+  /** Summary carried into the successor session's system prompt on its first mount. */
+  private pendingSummary: string | undefined
 
   constructor(
     private readonly ctx: Context,
     private readonly options: SessionDriverOptions,
-  ) {}
+  ) {
+    this.currentDutyId = options.dutySessionId
+  }
+
+  /** The duty session id the next duty delivery (or ensureLive) will use. */
+  currentDutySessionId(): string {
+    return this.currentDutyId
+  }
 
   /**
    * Resolve the default agent preset id once. Mounting it in setup is what
@@ -110,7 +148,7 @@ export class SessionDriver {
 
   /** Queue one Telegram text into the duty session; resolves with the reply. */
   async run(text: string): Promise<TurnOutcome> {
-    return await this.runIn(this.options.dutySessionId, text)
+    return await this.runIn(this.currentDutySessionId(), text)
   }
 
   /** Queue one Telegram text into an arbitrary session id. */
@@ -142,7 +180,7 @@ export class SessionDriver {
       .catch(() => undefined)
       .then(async () => {
         try {
-          await this.attach(this.options.dutySessionId, true)
+          await this.attach(this.currentDutySessionId(), true)
         } catch (error) {
           result = { error: error instanceof Error ? error.message : String(error) }
         }
@@ -174,6 +212,14 @@ export class SessionDriver {
       // Same name + order as the deployment persona → shadows it for this agent.
       if (isDuty) {
         agentCtx.systemPrompt.section({ name: 'deployment:persona', order: 0, text: this.options.persona })
+        // Rotation handoff: the successor session opens with the summary of
+        // the retired one, as a system-prompt section (not chat history), so
+        // continuity survives without inheriting the old event log.
+        const handoff = this.pendingSummary
+        if (handoff !== undefined) {
+          agentCtx.systemPrompt.section({ name: 'telegram-duty:handoff', order: 1, text: handoff })
+          this.pendingSummary = undefined
+        }
       }
       // Mount the default preset so the agent has the standard tools
       // (bash/pwsh/fs/subagents/...), exactly like web-created sessions.
@@ -192,7 +238,7 @@ export class SessionDriver {
     } catch (error) {
       const resumeError = error instanceof Error ? error.message : String(error)
       if (!isDuty) throw new Error(TARGET_OFFLINE_ERROR)
-      this.ctx.logger.warn('telegram-duty', `resume "${this.options.dutySessionId}" failed (${resumeError}), creating`)
+      this.ctx.logger.warn('telegram-duty', `resume "${sessionId}" failed (${resumeError}), creating`)
       try {
         handle = await agents.create({
           sessionId: SessionId(sessionId),
@@ -217,7 +263,7 @@ export class SessionDriver {
   }
 
   private async turn(sessionId: string, text: string): Promise<TurnOutcome> {
-    const isDuty = sessionId === this.options.dutySessionId
+    const isDuty = sessionId === this.currentDutySessionId()
     const { agent, dispose } = await this.attach(sessionId, isDuty)
     try {
       await agent.whenIdle()
@@ -227,10 +273,44 @@ export class SessionDriver {
         source: { kind: 'plugin', plugin: isDuty ? DUTY_SOURCE_PLUGIN : TARGETED_SOURCE_PLUGIN },
       }))
       await agent.whenIdle()
-      return summarize(agent.session.events, firstSeq)
+      // O(log n + delta): slice the tail at firstSeq instead of rescanning the
+      // whole ever-growing event array every turn.
+      const outcome = summarize(sliceFromSeq(agent.session.events, firstSeq), firstSeq)
+      if (isDuty) this.maybeRotate(agent, outcome)
+      return outcome
     } finally {
       // Release our own handle when we created one; a live foreign agent stays.
       await dispose()
     }
+  }
+
+  /**
+   * Account the finished duty turn and rotate to a fresh `-rN` successor when
+   * the thresholds say so. Runs on the serialized delivery chain; the next
+   * duty delivery (or ensureLive) creates the successor — resume fails on the
+   * fresh id, the create path runs setup, and setup consumes the handoff
+   * summary into the successor system prompt.
+   */
+  private maybeRotate(agent: Agent, outcome: TurnOutcome): void {
+    this.turnsOnDuty += 1
+    const rotate = shouldRotate(
+      { turns: this.turnsOnDuty, eventCount: agent.session.events.length },
+      {
+        maxTurnsPerSession: this.options.maxTurnsPerSession,
+        maxSessionEvents: this.options.maxSessionEvents,
+        autoRotate: this.options.autoRotate,
+      },
+    )
+    if (!rotate) return
+    this.rotationCount += 1
+    const successor = `${this.options.dutySessionId}-r${this.rotationCount}`
+    this.pendingSummary = buildHandoffSummary(outcome.text, this.turnsOnDuty)
+    this.ctx.logger.info(
+      'telegram-duty',
+      `duty session rotation: "${this.currentDutyId}" -> "${successor}" after ${this.turnsOnDuty} turns (events=${agent.session.events.length})`,
+    )
+    this.currentDutyId = successor
+    this.turnsOnDuty = 0
+    outcome.rotatedTo = successor
   }
 }
