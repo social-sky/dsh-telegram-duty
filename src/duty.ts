@@ -138,6 +138,8 @@ export class SessionDriver {
   private lastInputTokens: number | undefined
   /** One-time full-log usage baseline flag, per rotation cycle. */
   private usageScanned = false
+  /** provider/model -> resolved contextWindow (adapter metadata; undefined = unknown). */
+  private windowCache = new Map<string, number | undefined>()
 
   constructor(
     ctx: Context,
@@ -292,7 +294,7 @@ export class SessionDriver {
       // rotates BEFORE paying one oversized LLM input.
       this.lastInputTokens = extractLastUsageInputTokens(attached.agent.session.events)
       this.usageScanned = true
-      if (this.rotateNow(attached.agent)) {
+      if (this.rotateNow(attached.agent, await this.resolveMaxContextTokens())) {
         const handoff = buildHandoffSummary(extractLastAssistantText(attached.agent.session.events), this.turnsOnDuty)
         this.performRotation(handoff, attached.agent)
         await attached.dispose()
@@ -317,7 +319,7 @@ export class SessionDriver {
       if (isDuty) {
         const used = extractLastUsageInputTokens(tail)
         if (used !== undefined) this.lastInputTokens = used
-        this.maybeRotate(agent, outcome)
+        this.maybeRotate(agent, outcome, await this.resolveMaxContextTokens())
       }
       return outcome
     } finally {
@@ -333,8 +335,36 @@ export class SessionDriver {
    * fresh id, the create path runs setup, and setup consumes the handoff
    * summary into the successor system prompt.
    */
+  /**
+   * Effective token ceiling: the configured cap, clamped by the CURRENT
+   * model's real context window (x0.75 safety) when the adapter exposes it.
+   * This is what makes a mid-duty model switch safe: switching to a
+   * smaller-window model re-derives the ceiling instead of overflowing.
+   * Falls back to the configured cap when no llm service/metadata exists.
+   */
+  private async resolveMaxContextTokens(): Promise<number> {
+    const cap = this.options.maxContextTokens
+    if (cap === 0) return 0
+    const llm = this.ctx.get('llm') as { resolveModelInfo?: (provider: string, model: string) => Promise<unknown> } | undefined
+    if (llm === undefined || typeof llm.resolveModelInfo !== 'function') return cap
+    const selection = this.ctx.agentDefaultModel.currentSelection()
+    const key = `${selection.provider}/${selection.model}`
+    let window = this.windowCache.get(key)
+    if (window === undefined && !this.windowCache.has(key)) {
+      try {
+        const info = await llm.resolveModelInfo(selection.provider, selection.model) as { context?: { contextWindow?: number } } | undefined
+        const resolved = info?.context?.contextWindow
+        window = typeof resolved === 'number' && resolved > 0 ? resolved : undefined
+      } catch {
+        window = undefined
+      }
+      this.windowCache.set(key, window)
+    }
+    return window === undefined ? cap : Math.min(cap, Math.floor(window * 0.75))
+  }
+
   /** Rotation decision against ALL axes (turns / events / tokens). */
-  private rotateNow(agent: Agent): boolean {
+  private rotateNow(agent: Agent, maxContextTokens: number): boolean {
     return shouldRotate(
       {
         turns: this.turnsOnDuty,
@@ -344,7 +374,7 @@ export class SessionDriver {
       {
         maxTurnsPerSession: this.options.maxTurnsPerSession,
         maxSessionEvents: this.options.maxSessionEvents,
-        maxContextTokens: this.options.maxContextTokens,
+        maxContextTokens,
         autoRotate: this.options.autoRotate,
       },
     )
@@ -367,9 +397,9 @@ export class SessionDriver {
     if (outcome !== undefined) outcome.rotatedTo = successor
   }
 
-  private maybeRotate(agent: Agent, outcome: TurnOutcome): void {
+  private maybeRotate(agent: Agent, outcome: TurnOutcome, maxContextTokens: number): void {
     this.turnsOnDuty += 1
-    if (!this.rotateNow(agent)) return
+    if (!this.rotateNow(agent, maxContextTokens)) return
     this.performRotation(buildHandoffSummary(outcome.text, this.turnsOnDuty), agent, outcome)
   }
 }
