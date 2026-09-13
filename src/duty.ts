@@ -33,6 +33,9 @@ import {
   buildHandoffSummary,
   extractLastAssistantText,
   extractLastUsageInputTokens,
+  sessionEventCount,
+  sessionEventsFrom,
+  sessionEventsOf,
   shouldRotate,
   sliceFromSeq,
 } from './session-guard.ts'
@@ -291,11 +294,14 @@ export class SessionDriver {
     if (isDuty && !this.usageScanned) {
       // One-time per-cycle baseline: read the LAST usage chunk from the whole
       // event log (CPU-only, no API cost) so an oversized INHERITED session
-      // rotates BEFORE paying one oversized LLM input.
-      this.lastInputTokens = extractLastUsageInputTokens(attached.agent.session.events)
+      // rotates BEFORE paying one oversized LLM input. dsh 0.1.5-rc.1 has no
+      // `events` property at all, so the log is read through sessionEventsOf()
+      // (rc.1 snapshotEvents), keeping this valid on both API generations.
+      await attached.agent.whenIdle()
+      this.lastInputTokens = extractLastUsageInputTokens(sessionEventsOf(attached.agent.session))
       this.usageScanned = true
       if (this.rotateNow(attached.agent, await this.resolveMaxContextTokens())) {
-        const handoff = buildHandoffSummary(extractLastAssistantText(attached.agent.session.events), this.turnsOnDuty)
+        const handoff = buildHandoffSummary(extractLastAssistantText(sessionEventsOf(attached.agent.session)), this.turnsOnDuty)
         this.performRotation(handoff, attached.agent)
         await attached.dispose()
         sessionId = this.currentDutySessionId()
@@ -314,7 +320,7 @@ export class SessionDriver {
       await agent.whenIdle()
       // O(log n + delta): slice the tail at firstSeq instead of rescanning the
       // whole ever-growing event array every turn.
-      const tail = sliceFromSeq(agent.session.events, firstSeq)
+      const tail = sessionEventsFrom(agent.session, firstSeq) as readonly SessionEvent[]
       const outcome = summarize(tail, firstSeq)
       if (isDuty) {
         const used = extractLastUsageInputTokens(tail)
@@ -368,7 +374,7 @@ export class SessionDriver {
     return shouldRotate(
       {
         turns: this.turnsOnDuty,
-        eventCount: agent.session.events.length,
+        eventCount: sessionEventCount(agent.session),
         lastInputTokens: this.lastInputTokens,
       },
       {
@@ -388,7 +394,7 @@ export class SessionDriver {
     const tokenNote = this.lastInputTokens === undefined ? '' : `, inputTokens=${this.lastInputTokens}`
     this.ctx.logger.info(
       'telegram-duty',
-      `duty session rotation: "${this.currentDutyId}" -> "${successor}" after ${this.turnsOnDuty} turns (events=${agent.session.events.length}${tokenNote})`,
+      `duty session rotation: "${this.currentDutyId}" -> "${successor}" after ${this.turnsOnDuty} turns (events=${sessionEventCount(agent.session)}${tokenNote})`,
     )
     this.currentDutyId = successor
     this.turnsOnDuty = 0
