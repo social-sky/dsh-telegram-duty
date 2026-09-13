@@ -119,6 +119,9 @@ export class Gateway {
       dutySessionId: this.dutyId,
       cwd: deps.runtime.dutyCwd ?? process.cwd(),
       persona: this.strings.dutyPersona,
+      maxTurnsPerSession: deps.runtime.maxTurnsPerSession,
+      maxSessionEvents: deps.runtime.maxSessionEvents,
+      autoRotate: deps.runtime.autoRotate,
     })
     this.approvals = new ApprovalManager({
       timeoutMs: (deps.runtime.approvalTimeoutMinutes ?? 10) * 60_000,
@@ -323,7 +326,7 @@ export class Gateway {
     }
 
     // 3) task: resolve the route (default duty → active target → #N one-shot)
-    let targetId = this.targeting.activeId() ?? this.dutyId
+    let targetId = this.targeting.activeId() ?? this.driver.currentDutySessionId()
     let targetTitle: string | undefined
     let taskText = trimmed
     const prefix = parseTargetPrefix(trimmed)
@@ -385,7 +388,7 @@ export class Gateway {
       for (const agent of this.ctx.agents.roots()) {
         if (items.length >= MAX_SESSION_LIST) break
         const id = String(agent.id)
-        if (id === this.dutyId) continue
+        if (this.isDutySession(id)) continue
         items.push({
           sessionId: id,
           title: displayTitle(id, agent.session.events, false, this.strings.dutySessionName),
@@ -398,7 +401,7 @@ export class Gateway {
       for (const workspace of registry.list()) {
         for (const id of workspace.sessionIds) {
           const key = String(id)
-          if (key === this.dutyId || archived.has(key) || order.includes(key)) continue
+          if (this.isDutySession(key) || archived.has(key) || order.includes(key)) continue
           order.push(key)
         }
       }
@@ -478,7 +481,7 @@ export class Gateway {
       const pending = scanPendingApprovals(agent.session.events)
       if (pending.length === 0) continue
       const id = String(agent.id)
-      const title = displayTitle(id, agent.session.events, id === this.dutyId, this.strings.dutySessionName)
+      const title = displayTitle(id, agent.session.events, this.isDutySession(id), this.strings.dutySessionName)
       for (const item of pending) lines.push(`· 工具「${item.toolName}」（${title}）`)
     }
     if (lines.length > 0) await this.sendChunked(this.strings.pendingWebApprovals(lines.join('\n')))
@@ -503,6 +506,11 @@ export class Gateway {
   /** telegram_notify tool body: push one message to the phone, no waiting. */
   async notifyPhone(text: string): Promise<void> {
     await this.sendChunked(text)
+  }
+
+  /** The duty session and its rotated successors (-rN) never appear in listings. */
+  private isDutySession(id: string): boolean {
+    return id === this.dutyId || id.startsWith(`${this.dutyId}-r`)
   }
 
   private chatId(): number {
