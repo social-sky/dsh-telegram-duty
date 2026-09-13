@@ -1,0 +1,60 @@
+NOTICE — dsh-telegram-duty fork
+
+This repository (`social-sky/dsh-telegram-duty`) is a personal fork of
+**[`luzhengyangtx/dsh-telegram-duty`](https://github.com/luzhengyangtx/dsh-telegram-duty)**.
+
+## Maintenance
+
+- `**Fork maintainer:** `social-sky` (GitHub: [@social-sky](https://github.com/social-sky))
+- **Original author:** `luzhengyangtx` (GitHub: [@luzhengyangtx](https://github.com/luzhengyangtx))
+- `**Fork created:** 2026-09-02 (per GitHub API fork timestamp)
+- **Source snapshot at fork time:** `luzhengyangtx/dsh-telegram-duty` P pre-fork commit
+- **Default branch on fork:** `master`
+
+Changes made on this fork are not automatically synced back upstream. To
+propose a change for inclusion in the original project, open an issue or pull
+request on `luzhengyangtx/dsh-telegram-duty.
+
+## Upstream lineage (license attribution chain)
+
+This software derives from two MIT-licensed upstream projects. The original
+LICENSE file already records this chain; this NOTICE restates it for quick
+reference.
+
+1. **Direct upstream — `luzhengyangtx/dsh-telegram-duty`**
+   - License: MIT (Copyright (c) 2026 luzhengyangtx)
+   - Source: <https://github.com/luzhengyangtx/dsh-telegram-duty>
+   - License file: <https://github.com/luzhengyangtx/dsh-telegram-duty/blob/master/LICENSE>
+
+2. **Indirect upstream — (`kriskwok/dsh-feishu-gateway`**
+   - License: MIT (Copyright (c) kriskwok)
+   - Source: <https://github.com/kriskwok/dsh-feishu-gateway>
+   - License file: <https://github.com/kriskwok/dsh-feishu-gateway/blob/master/LICENSE>    - Used for: portions of the session-driving pattern (resume / create +   summarize). Per MIT terms, this attribution must be preserved in any    copy or substantial portion of the work.
+
+Both licenses were independently verified on 2026-09-13 by reading the
+LICENSE file contents and the GitHub repository metadata
+(`license.spdx_id == "MIT", no `project.json` `private: true` flag).
+
+### What MIT permits on this fork
+
+- Modify the source code, configuration, and assets.
+- Republish, redistribute, and/or `npm publish` under any namespace.
+- Use for commercial purposes.
+- Sublicense to third-parties (with attribution preserved).
+
+### What MIT requires on this fork
+
+- The `LICENSE` file (verbatim) must remain in the repository and travel with
+  every copy and substantial portion of the work.
+- The upstream attribution chain above (or equivalent in `LICENSE`/ `README`)
+  must not be removed.
+- New code added on this fork may carry its own copyright (eg.
+  `Copyright (c) 2026 social-sky` for fork-local additions) without
+  affecting the upstream MIT obligations.
+
+### Trademarks
+
+ 
+"DeepSeek", "DeepSeek Harness", "Cordis", "Telegram", "Feishu", "Lark", and
+ related names are trademarks of their respective owners. This NOTICE does not
+ grant any rights to use those trademarks.
