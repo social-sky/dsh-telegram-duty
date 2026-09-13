@@ -72,6 +72,13 @@ export interface TelegramDutyConfig {
   maxSessionEvents?: number
   /** Master switch for automatic duty-session rotation with summary handoff. */
   autoRotate?: boolean
+  /**
+   * Rotate when the duty session's last recorded usage.inputTokens reaches
+   * this (0 disables the token axis). Primary COST guard: every turn before
+   * rotation pays ~this many input tokens. Harness evidence: peak
+   * 598,312 inputTokens; final turn died with CONTEXT_WINDOW_EXCEEDED.
+   */
+  maxContextTokens?: number
 }
 
 export const Config: Schema<TelegramDutyConfig> = z.object({
@@ -89,6 +96,7 @@ export const Config: Schema<TelegramDutyConfig> = z.object({
   maxTurnsPerSession: z.number().default(200),
   maxSessionEvents: z.number().default(5000),
   autoRotate: z.boolean().default(true),
+  maxContextTokens: z.number().default(400000),
 })
 
 /** Apply schema defaults (and surface schema errors early). */
