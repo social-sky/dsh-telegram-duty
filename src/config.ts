@@ -2,15 +2,22 @@
  * Telegram duty gateway configuration. Explicit values in this schema
  * (settings / patch row config) always win; an optional `credentialsFile`
  * can supply token / chat_id / proxy defaults.
+ *
+ * dsh-settings compatibility note (2026-09-13): since dsh 0.1.2-rc.1 the
+ * settings module no longer exposes a runtime namespace helper; namespaces
+ * are plain strings, validated by SettingsProvider.register against
+ * /^[a-z][a-z0-9-]*$/. Do NOT re-add the removed named import from
+ * '@deepseek-ai/dsh-settings' here: a missing named export crashes the whole
+ * loader entry at import time (harness LXC incident, 2026-09-07, 192
+ * crash-restarts). scripts/check-compat.mjs guards this file.
  * @module @luzhengyangtx/dsh-telegram-duty/config
  */
 
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 
-/** Settings document namespace owned by this plugin. */
-export const TELEGRAM_DUTY_NAMESPACE = settingsNamespace('telegram-duty')
+/** Settings document namespace owned by this plugin (plain string since dsh 0.1.2-rc.1). */
+export const TELEGRAM_DUTY_NAMESPACE = 'telegram-duty'
 
 /**
  * State-marker namespaces: the web settings wire is allowlisted, so the
@@ -19,8 +26,8 @@ export const TELEGRAM_DUTY_NAMESPACE = settingsNamespace('telegram-duty')
  * mode; the forwarded `settings/document-updated` event carries the namespace
  * name verbatim, and the banner derives the mode from WHICH marker moved.
  */
-export const DUTY_STATE_ON_NAMESPACE = settingsNamespace('telegram-duty-on')
-export const DUTY_STATE_OFF_NAMESPACE = settingsNamespace('telegram-duty-off')
+export const DUTY_STATE_ON_NAMESPACE = 'telegram-duty-on'
+export const DUTY_STATE_OFF_NAMESPACE = 'telegram-duty-off'
 
 /** Trivial schema for the state-marker sections. */
 export const StateMarkerConfig: Schema<{ n?: number }> = z.object({
@@ -35,7 +42,7 @@ export interface TelegramDutyConfig {
   chatId?: number
   /** HTTP(S) proxy used for Telegram API calls; empty = direct connection. */
   proxy?: string
-  /** Stable DSH session id for the duty session (auto-created on first message). */
+  /** Stable DSH session id base for the duty session (auto-created on first message). */
   sessionId?: string
   /** Absolute workspace cwd for the duty session (defaults to process cwd). */
   dutyCwd?: string
@@ -51,6 +58,20 @@ export interface TelegramDutyConfig {
   credentialsFile?: string
   /** Telegram sendMessage text limit minus headroom; longer replies are split. */
   replyChunkChars?: number
+  /**
+   * Rotate the duty session after this many delivered turns (duty session
+   * only; targeted sessions are never rotated). 0 disables the turn limit.
+   */
+  maxTurnsPerSession?: number
+  /**
+   * Rotate the duty session when its event log reaches this many recorded
+   * events. 0 disables the event limit. Reference point: the 2026-09-02
+   * archived duty session reached 29,755 events (41.8 MB uncompressed)
+   * before the session became unusable.
+   */
+  maxSessionEvents?: number
+  /** Master switch for automatic duty-session rotation with summary handoff. */
+  autoRotate?: boolean
 }
 
 export const Config: Schema<TelegramDutyConfig> = z.object({
@@ -65,6 +86,9 @@ export const Config: Schema<TelegramDutyConfig> = z.object({
   dataDir: z.string().default(''),
   credentialsFile: z.string().default(''),
   replyChunkChars: z.number().default(3800),
+  maxTurnsPerSession: z.number().default(200),
+  maxSessionEvents: z.number().default(5000),
+  autoRotate: z.boolean().default(true),
 })
 
 /** Apply schema defaults (and surface schema errors early). */
