@@ -122,6 +122,7 @@ export class Gateway {
       maxTurnsPerSession: deps.runtime.maxTurnsPerSession,
       maxSessionEvents: deps.runtime.maxSessionEvents,
       autoRotate: deps.runtime.autoRotate,
+      maxContextTokens: deps.runtime.maxContextTokens,
     })
     this.approvals = new ApprovalManager({
       timeoutMs: (deps.runtime.approvalTimeoutMinutes ?? 10) * 60_000,
