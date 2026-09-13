@@ -140,14 +140,28 @@ export function sessionEventsFrom(session: unknown, fromSeq: number): readonly u
   return sliceFromSeq(sessionEventsOf(session) as ReadonlyArray<{ seq: number }>, fromSeq)
 }
 
+/** Pull usage.inputTokens from any known event shape (v2 chunk, v3 data/message). */
+function usageInputTokensOf(event: unknown): number | undefined {
+  const e = event as {
+    data?: {
+      chunk?: { usage?: { inputTokens?: number } }
+      usage?: { inputTokens?: number }
+      message?: { usage?: { inputTokens?: number } }
+    }
+  }
+  const candidates = [e?.data?.chunk?.usage, e?.data?.usage, e?.data?.message?.usage]
+  for (const candidate of candidates) {
+    if (candidate !== undefined && typeof candidate.inputTokens === 'number') return candidate.inputTokens
+  }
+  return undefined
+}
+
 export function extractLastUsageInputTokens(events: unknown): number | undefined {
   if (!Array.isArray(events)) return undefined
   let last: number | undefined
   for (const event of events) {
-    const e = event as { type?: string; data?: { chunk?: { type?: string; usage?: { inputTokens?: number } } } }
-    if (e?.type !== 'assistant/chunk') continue
-    const usage = e.data?.chunk?.usage
-    if (usage !== undefined && typeof usage.inputTokens === 'number') last = usage.inputTokens
+    const value = usageInputTokensOf(event)
+    if (value !== undefined) last = value
   }
   return last
 }
@@ -157,12 +171,8 @@ export function extractMaxUsageInputTokens(events: unknown): number | undefined 
   if (!Array.isArray(events)) return undefined
   let max: number | undefined
   for (const event of events) {
-    const e = event as { type?: string; data?: { chunk?: { type?: string; usage?: { inputTokens?: number } } } }
-    if (e?.type !== 'assistant/chunk') continue
-    const usage = e.data?.chunk?.usage
-    if (usage !== undefined && typeof usage.inputTokens === 'number') {
-      if (max === undefined || usage.inputTokens > max) max = usage.inputTokens
-    }
+    const value = usageInputTokensOf(event)
+    if (value !== undefined && (max === undefined || value > max)) max = value
   }
   return max
 }
