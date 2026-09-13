@@ -109,6 +109,8 @@ export function summarize(events: readonly SessionEvent[], firstSeq: number): Tu
 
 /** Serialized delivery into the duty session and, when targeted, others. */
 export class SessionDriver {
+  private readonly ctx: Context
+  private readonly options: SessionDriverOptions
   private chain: Promise<unknown> = Promise.resolve()
   private presetPromise: Promise<string | undefined> | undefined
   /** The duty session id the NEXT duty delivery attaches to; `-rN` after rotations. */
@@ -121,9 +123,11 @@ export class SessionDriver {
   private pendingSummary: string | undefined
 
   constructor(
-    private readonly ctx: Context,
-    private readonly options: SessionDriverOptions,
+    ctx: Context,
+    options: SessionDriverOptions,
   ) {
+    this.ctx = ctx
+    this.options = options
     this.currentDutyId = options.dutySessionId
   }
 
