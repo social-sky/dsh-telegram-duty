@@ -320,6 +320,11 @@ export class Gateway {
       await this.handleUnblockCommand()
       return
     }
+    if (command === 'new') {
+      await this.driver.forceRotation()
+      await this.sendChunked(this.strings.newSession)
+      return
+    }
 
     // 2.5) bare "#N" with no message content
     if (isBareTargetPrefix(trimmed)) {
