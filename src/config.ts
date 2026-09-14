@@ -79,6 +79,8 @@ export interface TelegramDutyConfig {
    * 598,312 inputTokens; final turn died with CONTEXT_WINDOW_EXCEEDED.
    */
   maxContextTokens?: number
+  /** Max minutes to wait for the agent to settle a turn, before and after the follow-up. */
+  turnTimeoutMinutes?: number
 }
 
 export const Config: Schema<TelegramDutyConfig> = z.object({
@@ -97,6 +99,7 @@ export const Config: Schema<TelegramDutyConfig> = z.object({
   maxSessionEvents: z.number().default(5000),
   autoRotate: z.boolean().default(true),
   maxContextTokens: z.number().default(400000),
+  turnTimeoutMinutes: z.number().default(10),
 })
 
 /** Apply schema defaults (and surface schema errors early). */
