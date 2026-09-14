@@ -85,6 +85,8 @@ export interface SessionDriverOptions {
    * with CONTEXT_WINDOW_EXCEEDED (glm-5.3-flash).
    */
   maxContextTokens?: number
+  /** Max minutes to wait for the agent to settle each phase of a turn (0 = unlimited). */
+  turnTimeoutMinutes?: number
 }
 
 /**
@@ -297,7 +299,7 @@ export class SessionDriver {
       // rotates BEFORE paying one oversized LLM input. dsh 0.1.5-rc.1 has no
       // `events` property at all, so the log is read through sessionEventsOf()
       // (rc.1 snapshotEvents), keeping this valid on both API generations.
-      await attached.agent.whenIdle()
+      await this.whenIdleBounded(attached.agent, 'the pre-turn baseline scan')
       this.lastInputTokens = extractLastUsageInputTokens(sessionEventsOf(attached.agent.session))
       this.usageScanned = true
       const baselineTokens = await this.measureContextTokens(attached.agent)
@@ -315,13 +317,13 @@ export class SessionDriver {
     }
     const { agent, dispose } = attached
     try {
-      await agent.whenIdle()
+      await this.whenIdleBounded(agent, 'before the follow-up')
       const firstSeq = agent.session.seq
       agent.followup(createUserMessage({
         content: [{ type: 'text', text }],
         source: { kind: 'plugin', plugin: isDuty ? DUTY_SOURCE_PLUGIN : TARGETED_SOURCE_PLUGIN },
       }))
-      await agent.whenIdle()
+      await this.whenIdleBounded(agent, 'after the follow-up')
       // O(log n + delta): slice the tail at firstSeq instead of rescanning the
       // whole ever-growing event array every turn.
       const tail = sessionEventsFrom(agent.session, firstSeq) as readonly SessionEvent[]
@@ -435,6 +437,28 @@ export class SessionDriver {
   }
 
   /**
+   * `agent.whenIdle()` with a deadline. A turn whose agent never settles (a
+   * context-overflow compaction loop, a wedged approval, a dead connection)
+   * would otherwise hang `turn` forever: the user only ever sees the ack
+   * message, with no reply and no error. The timeout rejects so the gateway
+   * replies through the normal taskError path and the turn is not left open.
+   * 0 disables the deadline.
+   */
+  private whenIdleBounded(agent: Agent, phase: string): Promise<void> {
+    const minutes = this.options.turnTimeoutMinutes ?? 10
+    if (minutes <= 0) return agent.whenIdle()
+    return Promise.race([
+      agent.whenIdle(),
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error(`turn timed out after ${minutes} min waiting for the agent to settle ${phase}; the session may be stuck — try /unblock, or /new to start a fresh duty session`)),
+          minutes * 60_000,
+        )
+      }),
+    ])
+  }
+
+  /**
    * /new command: force-rotate to a fresh -rN successor immediately, carrying
    * a handoff summary built from the current session's last reply. Serialized
    * on the delivery chain so it cannot race an in-flight turn.
@@ -445,7 +469,7 @@ export class SessionDriver {
       const attached = await this.attach(sessionId, true)
       try {
         const agent = attached.agent
-        await agent.whenIdle()
+        await this.whenIdleBounded(agent, 'the /new handoff scan')
         const handoff = buildHandoffSummary(extractLastAssistantText(sessionEventsOf(agent.session)), this.turnsOnDuty)
         this.performRotation(handoff, agent)
       } finally {
