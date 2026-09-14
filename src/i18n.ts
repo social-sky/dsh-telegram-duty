@@ -38,6 +38,7 @@ export interface Strings {
   targeted: (title: string) => string
   targetAck: string
   dutyReset: string
+  newSession: string
   snapshotExpired: string
   prefixUnknown: (index: number) => string
   prefixNeedsText: string
@@ -60,6 +61,7 @@ const zh: Strings = {
     '· /sessions → 列出在线会话，点编号后消息就发给该会话',
     '· 消息前加 #编号 → 只把这一条发给指定会话（如 #1 帮我看看进度）',
     '· /duty → 回到默认值班会话路由',
+    '· /new → 開新值班 session（封存目前 session，帶交接摘要）',
     '· /unblock → 取消被审批卡住的回合（网页审批未处理时自救）',
     '· /away → 进入值守模式（审批转到手机）',
     '· /back → 回到本地模式（审批恢复网页弹窗）',
@@ -100,6 +102,7 @@ const zh: Strings = {
   targeted: title => `🎯 已定向到「${title}」，后续消息都发给它。发送 /duty 回到值班会话。`,
   targetAck: '✅ 已定向',
   dutyReset: '🏠 已回到默认值班会话路由。',
+  newSession: '🆕 已開新值班 session（舊 session 已封存，交接摘要帶入新 session）。',
   snapshotExpired: '⏳ 会话列表快照已过期，请重新发送 /sessions。',
   prefixUnknown: index => `❓ 编号 ${index} 不在最近的会话列表中，请重新发送 /sessions 查看当前列表。`,
   prefixNeedsText: '请把消息内容写在编号后面，例如：#1 帮我看看进度。',
@@ -123,6 +126,7 @@ const en: Strings = {
     '· /sessions → list live sessions; tap a number to route messages there',
     '· Prefix a message with #N → send just that one to session N (e.g. #1 check my progress)',
     '· /duty → back to the default duty-session route',
+    '· /new → start a fresh duty session (archives the current one, carries a handoff summary)',
     '· /unblock → cancel turns stuck on unanswered web approvals',
     '· /away → enter duty mode (approvals go to your phone)',
     '· /back → return to local mode (approvals stay in the web UI)',
@@ -163,6 +167,7 @@ const en: Strings = {
   targeted: title => `🎯 Routed to "${title}"; following messages go there. Send /duty to return to the duty session.`,
   targetAck: '✅ Routed',
   dutyReset: '🏠 Back to the default duty-session route.',
+  newSession: '🆕 Started a fresh duty session (previous one archived; handoff summary carried over).',
   snapshotExpired: '⏳ The session list snapshot expired — please send /sessions again.',
   prefixUnknown: index => `❓ Number ${index} is not in the recent session list — please send /sessions again.`,
   prefixNeedsText: 'Put the message after the number, e.g. #1 check my progress.',
