@@ -433,4 +433,26 @@ export class SessionDriver {
     if (!this.rotateNow(agent, maxContextTokens, contextTokens)) return
     this.performRotation(buildHandoffSummary(outcome.text, this.turnsOnDuty), agent, outcome)
   }
+
+  /**
+   * /new command: force-rotate to a fresh -rN successor immediately, carrying
+   * a handoff summary built from the current session's last reply. Serialized
+   * on the delivery chain so it cannot race an in-flight turn.
+   */
+  async forceRotation(): Promise<void> {
+    const next = this.chain.catch(() => undefined).then(async () => {
+      const sessionId = this.currentDutySessionId()
+      const attached = await this.attach(sessionId, true)
+      try {
+        const agent = attached.agent
+        await agent.whenIdle()
+        const handoff = buildHandoffSummary(extractLastAssistantText(sessionEventsOf(agent.session)), this.turnsOnDuty)
+        this.performRotation(handoff, agent)
+      } finally {
+        await attached.dispose()
+      }
+    })
+    this.chain = next.catch(() => undefined)
+    await next
+  }
 }
