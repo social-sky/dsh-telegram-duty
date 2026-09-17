@@ -5,7 +5,7 @@
  * @module @luzhengyangtx/dsh-telegram-duty/client/duty-button
  */
 
-import type { SessionId, SessionListState } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SessionId, SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { DutyMode } from './settings-store.ts'
 
 declare module '@deepseek-ai/dsh-session-projection/types' {

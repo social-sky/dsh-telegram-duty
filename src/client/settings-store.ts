@@ -6,9 +6,7 @@
  * mode signal. No settings reads are needed.
  */
 
-import {
-  createSnapshotStore, type SnapshotStore,
-} from '@deepseek-ai/dsh-client-runtime/client'
+import { createSnapshotStore, type SnapshotStore } from './snapshot-store.ts'
 
 export const DUTY_STATE_ON_NS = 'telegram-duty-on'
 export const DUTY_STATE_OFF_NS = 'telegram-duty-off'

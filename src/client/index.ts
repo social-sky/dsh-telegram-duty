@@ -15,10 +15,8 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 // Type-only: pulls ui-sidebar's SlotMap declaration (sidebar.footer.action).
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import {
-  createSnapshotStore, SessionRuntime,
-} from '@deepseek-ai/dsh-client-runtime/client'
+import type { DutyClientContext } from './client-context.ts'
+import { createSnapshotStore } from './snapshot-store.ts'
 import { DutyBanner } from './DutyBanner.tsx'
 import type { DutyBannerInjected } from './DutyBanner.tsx'
 import { DutyButton } from './DutyButton.tsx'
@@ -35,7 +33,7 @@ export const inject = ['slots', 'remote', 'sessions', 'locale']
  * events with a command-based seed.
  * @param ctx - client root context.
  */
-export function apply(ctx: ClientContext): void {
+export function apply(ctx: DutyClientContext): void {
   const controller = new DutyWatchController()
   const sessions = ctx.sessions
   /** Transient open-failure flash (cleared after a few seconds). */
@@ -89,7 +87,7 @@ export function apply(ctx: ClientContext): void {
         runCommand('/duty-session')
       },
       refresh: async () => {
-        await (sessions as SessionRuntime).refresh()
+        await sessions.refresh()
       },
       fail: () => {
         openFailed.update((next) => { next.failed = true })
