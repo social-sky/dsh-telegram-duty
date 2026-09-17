@@ -19,7 +19,7 @@ import type { TurnOutcome } from './duty.ts'
 import { ApprovalManager, parseApprovalCallback, parseApprovalReply } from './approval.ts'
 import { TelegramAskManager, parseAskCallback } from './ask.ts'
 import type { TelegramAskOutcome } from './ask.ts'
-import { chunkText, isBareTargetPrefix, parseCommand, parseSessionCallback, parseTargetPrefix } from './router.ts'
+import { chunkText, isBareTargetPrefix, parseCommand, parseModelCallback, parseSessionCallback, parseTargetPrefix } from './router.ts'
 import { Targeting, displayTitle } from './targeting.ts'
 import type { SessionItem } from './targeting.ts'
 import { scanPendingApprovals } from './pending.ts'
@@ -108,6 +108,8 @@ export class Gateway {
   private readonly startedAt = Date.now()
   /** Latest Telegram long-poll channel state. */
   private channelUp = false
+  /** Model list snapshot behind the current /models keyboard. */
+  private modelOptions: Array<{ provider: string; model: string }> = []
   private mode: 'local' | 'duty'
 
   constructor(deps: GatewayDeps) {
@@ -335,6 +337,10 @@ export class Gateway {
       await this.handleStatusCommand()
       return
     }
+    if (command === 'models') {
+      await this.handleModelsCommand()
+      return
+    }
 
     // 2.5) bare "#N" with no message content
     if (isBareTargetPrefix(trimmed)) {
@@ -509,6 +515,44 @@ export class Gateway {
    * an unanswered approval (the turn abort settles the approval as
    * 'cancelled' and the task can be resent with phone-side approvals).
    */
+  /**
+   * /models command: list the switchable models (the user-curated
+   * subagent-model-selection allowlist, reused as the main-model catalog) and
+   * mark the current default. Tapping a button persists the new default via
+   * the host agentDefaultModel service; it applies to NEW sessions.
+   */
+  private async handleModelsCommand(): Promise<void> {
+    const settings = this.ctx.get('settings') as { section?: (ns: string) => unknown } | undefined
+    const section = settings?.section?.('subagent-model-selection') as
+      | { allowedModels?: Array<{ provider: string; model: string }> }
+      | undefined
+    const allowed = section?.allowedModels ?? []
+    if (allowed.length === 0) {
+      await this.sendChunked(this.strings.modelsNone)
+      return
+    }
+    const snap = this.driver.status()
+    this.modelOptions = allowed
+    const lines = allowed.map((m, index) => {
+      const mark = m.provider === snap.provider && m.model === snap.model ? '  ✓' : ''
+      return `[${index + 1}] ${m.provider} / ${m.model}${mark}`
+    })
+    const keyboard: InlineKeyboard = allowed.map((_m, index) => [{
+      text: `${index + 1}`,
+      callback_data: `model:${index + 1}`,
+    }])
+    await this.sendChunked([this.strings.modelsTitle, ...lines].join('\n'), keyboard)
+  }
+
+  /** Persist one model selection as the host default (hot-reloads settings). */
+  private async saveModelSelection(selection: { provider: string; model: string }): Promise<void> {
+    const service = this.ctx.get('agentDefaultModel') as
+      | { saveSelection?: (next: { provider: string; model: string }) => Promise<void> }
+      | undefined
+    if (service?.saveSelection === undefined) throw new Error('agentDefaultModel service unavailable')
+    await service.saveSelection(selection)
+  }
+
   /** /status command: aggregate duty runtime facts into one phone-readable report. */
   private async handleStatusCommand(): Promise<void> {
     const snap = this.driver.status()
@@ -578,6 +622,7 @@ export class Gateway {
     const data = query.data ?? ''
     let ack: string | undefined
     let targetedTitle: string | undefined
+    let switchedTo: string | undefined
     const session = parseSessionCallback(data)
     if (session !== null) {
       const entry = this.targeting.lookup(session.index)
@@ -591,7 +636,22 @@ export class Gateway {
         targetedTitle = entry.title
       }
     } else {
-      const approval = parseApprovalCallback(data)
+      const modelPick = parseModelCallback(data)
+      if (modelPick !== null) {
+        const selection = this.modelOptions[modelPick.index - 1]
+        if (selection === undefined) {
+          ack = this.strings.snapshotExpired
+        } else {
+          try {
+            await this.saveModelSelection(selection)
+            ack = this.strings.modelSwitched(`${selection.provider} / ${selection.model}`)
+            switchedTo = `${selection.provider} / ${selection.model}`
+          } catch (error) {
+            ack = this.strings.taskError(error instanceof Error ? error.message : String(error))
+          }
+        }
+      } else {
+        const approval = parseApprovalCallback(data)
       if (approval !== null) {
         if (this.approvals.answer(approval.id, approval.decision)) {
           ack = approval.decision === 'allowed-once'
@@ -608,6 +668,7 @@ export class Gateway {
           ack = this.strings.callbackUnknown
         }
       }
+      }
     }
     try {
       // answerCallbackQuery toasts cap at 200 characters.
@@ -617,6 +678,9 @@ export class Gateway {
     }
     if (targetedTitle !== undefined) {
       await this.sendChunked(this.strings.targeted(targetedTitle))
+    }
+    if (switchedTo !== undefined) {
+      await this.sendChunked(this.strings.modelApplied(switchedTo))
     }
   }
 

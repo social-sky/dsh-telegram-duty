@@ -5,7 +5,7 @@
  * @module @luzhengyangtx/dsh-telegram-duty/router
  */
 
-export type DutyCommand = 'away' | 'back' | 'help' | 'sessions' | 'duty' | 'unblock' | 'new' | 'status' | null
+export type DutyCommand = 'away' | 'back' | 'help' | 'sessions' | 'duty' | 'unblock' | 'new' | 'status' | 'models' | null
 
 /** Recognize the plugin's own slash commands (exact match, trimmed). */
 export function parseCommand(text: string): DutyCommand {
@@ -18,6 +18,7 @@ export function parseCommand(text: string): DutyCommand {
   if (t === '/unblock' || t === '/u') return 'unblock'
   if (t === '/new' || t === '/n') return 'new'
   if (t === '/status') return 'status'
+  if (t === '/models') return 'models'
   return null
 }
 
@@ -39,6 +40,15 @@ export function parseTargetPrefix(text: string): TargetPrefix | null {
   const index = Number(match[1])
   if (!Number.isSafeInteger(index) || index < 1) return null
   return { index, rest: (match[2] ?? '').trim() }
+}
+
+/** Parse a /models button payload like `model:3` into its 1-based list index. */
+export function parseModelCallback(data: string): { index: number } | null {
+  const match = /^model:(\d+)$/.exec(data)
+  if (match === null) return null
+  const index = Number(match[1])
+  if (!Number.isSafeInteger(index) || index < 1) return null
+  return { index }
 }
 
 /** True for a bare `#N` with no message content (needs a dedicated hint). */

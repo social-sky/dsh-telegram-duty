@@ -50,6 +50,10 @@ export interface Strings {
   modeDuty: string
   modeLocal: string
   statusReport: (s: StatusReportInput) => string
+  modelsTitle: string
+  modelsNone: string
+  modelSwitched: (model: string) => string
+  modelApplied: (model: string) => string
 }
 
 /** Inputs for the /status report formatter. */
@@ -83,12 +87,17 @@ const zh: Strings = {
     '· /duty → 回到默认值班会话路由',
     '· /new → 開新值班 session（封存目前 session，帶交接摘要）',
     '· /status → 目前值班狀態（模式/頻道/session/token/模型）',
+    '· /models → 切換主 agent 模型（點按鈕即切換，新 session 生效）',
     '· /unblock → 取消被审批卡住的回合（网页审批未处理时自救）',
     '· /away → 进入值守模式（审批转到手机）',
     '· /back → 回到本地模式（审批恢复网页弹窗）',
     '· 发消息即自动进入值守；回电脑在网页发条消息即自动切回本地',
     '· 审批回复格式：3 同意 / 3 拒绝',
   ].join('\n'),
+  modelsTitle: '🧭 主 agent 模型（✓ = 目前預設；點編號切換，新 session 生效）：',
+  modelsNone: '⚠️ 找不到可用模型清單（subagent-model-selection 未設定 allowedModels）。',
+  modelSwitched: model => `✅ 預設模型已切換：${model}`,
+  modelApplied: model => `🧭 已切換主 agent 模型為 ${model}。對進行中的 session 不回溯生效——送 /new 開新 session 即用新模型。`,
   modeDuty: '🔔 值守（審批轉手機）',
   modeLocal: '🖥 本地（審批網頁彈窗）',
   statusReport: (s) => [
@@ -162,12 +171,17 @@ const en: Strings = {
     '· /duty → back to the default duty-session route',
     '· /new → start a fresh duty session (archives the current one, carries a handoff summary)',
     '· /status → current duty status (mode/channel/session/tokens/model)',
+    '· /models → switch the main agent model (tap a button; applies to new sessions)',
     '· /unblock → cancel turns stuck on unanswered web approvals',
     '· /away → enter duty mode (approvals go to your phone)',
     '· /back → return to local mode (approvals stay in the web UI)',
     '· Any phone message switches to duty automatically; any web message switches back',
     '· Approval replies: 3 approve / 3 reject',
   ].join('\n'),
+  modelsTitle: '🧭 Main agent models (✓ = current default; tap a number to switch, applies to new sessions):',
+  modelsNone: '⚠️ No model list found (subagent-model-selection has no allowedModels).',
+  modelSwitched: model => `✅ Default model switched: ${model}`,
+  modelApplied: model => `🧭 Main agent model switched to ${model}. Running sessions keep their model — send /new to start one with the new model.`,
   modeDuty: '🔔 Duty (approvals on your phone)',
   modeLocal: '🖥 Local (approvals in the web UI)',
   statusReport: (s) => [
