@@ -126,6 +126,19 @@ export function summarize(events: readonly SessionEvent[], firstSeq: number): Tu
 }
 
 /** Serialized delivery into the duty session and, when targeted, others. */
+/** Aggregated duty runtime facts behind the /status report. */
+export interface DutyStatusSnapshot {
+  sessionId: string
+  rotationCount: number
+  turnsOnDuty: number
+  lastInputTokens?: number
+  turnTimeoutMinutes: number
+  busy: boolean
+  lastActivityAt: number
+  provider?: string
+  model?: string
+}
+
 export class SessionDriver {
   private readonly ctx: Context
   private readonly options: SessionDriverOptions
@@ -145,6 +158,10 @@ export class SessionDriver {
   private usageScanned = false
   /** provider/model -> resolved contextWindow (adapter metadata; undefined = unknown). */
   private windowCache = new Map<string, number | undefined>()
+  /** True while a queued duty turn is executing. */
+  private working = false
+  /** Epoch ms of the last completed duty turn (init = plugin start). */
+  private lastActivityAt = Date.now()
 
   constructor(
     ctx: Context,
@@ -182,6 +199,7 @@ export class SessionDriver {
   /** Queue one Telegram text into an arbitrary session id. */
   async runIn(sessionId: string, text: string): Promise<TurnOutcome> {
     let outcome: TurnOutcome = { text: '' }
+    this.working = true
     const next = this.chain
       .catch(() => undefined)
       .then(async () => {
@@ -194,7 +212,33 @@ export class SessionDriver {
       })
     this.chain = next.catch(() => undefined)
     await next
+    this.working = false
+    this.lastActivityAt = Date.now()
     return outcome
+  }
+
+  /** One-shot status snapshot for the /status command (no session attach). */
+  status(): DutyStatusSnapshot {
+    let provider: string | undefined
+    let model: string | undefined
+    try {
+      const selection = this.ctx.agentDefaultModel.currentSelection()
+      provider = selection.provider
+      model = selection.model
+    } catch {
+      // model selection service unavailable — report without the model line
+    }
+    return {
+      sessionId: this.currentDutyId,
+      rotationCount: this.rotationCount,
+      turnsOnDuty: this.turnsOnDuty,
+      lastInputTokens: this.lastInputTokens,
+      turnTimeoutMinutes: this.options.turnTimeoutMinutes ?? 10,
+      busy: this.working,
+      lastActivityAt: this.lastActivityAt,
+      provider,
+      model,
+    }
   }
 
   /**

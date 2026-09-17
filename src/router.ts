@@ -5,7 +5,7 @@
  * @module @luzhengyangtx/dsh-telegram-duty/router
  */
 
-export type DutyCommand = 'away' | 'back' | 'help' | 'sessions' | 'duty' | 'unblock' | 'new' | null
+export type DutyCommand = 'away' | 'back' | 'help' | 'sessions' | 'duty' | 'unblock' | 'new' | 'status' | null
 
 /** Recognize the plugin's own slash commands (exact match, trimmed). */
 export function parseCommand(text: string): DutyCommand {
@@ -17,6 +17,7 @@ export function parseCommand(text: string): DutyCommand {
   if (t === '/duty' || t === '/d') return 'duty'
   if (t === '/unblock' || t === '/u') return 'unblock'
   if (t === '/new' || t === '/n') return 'new'
+  if (t === '/status') return 'status'
   return null
 }
 

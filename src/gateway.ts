@@ -104,6 +104,10 @@ export class Gateway {
   private readonly poller: Poller
   private readonly strings: Strings
   private readonly inflight = new Set<Promise<void>>()
+  /** Plugin start time, for the /status uptime line. */
+  private readonly startedAt = Date.now()
+  /** Latest Telegram long-poll channel state. */
+  private channelUp = false
   private mode: 'local' | 'duty'
 
   constructor(deps: GatewayDeps) {
@@ -148,6 +152,7 @@ export class Gateway {
         this.spawn(() => this.handleUpdate(update))
       },
       onChannelState: (up) => {
+        this.channelUp = up
         this.ctx.logger.info('telegram-duty', up ? 'Telegram channel up' : 'Telegram channel down')
       },
       onError: (error) => {
@@ -326,6 +331,10 @@ export class Gateway {
       await this.sendChunked(this.strings.newSession)
       return
     }
+    if (command === 'status') {
+      await this.handleStatusCommand()
+      return
+    }
 
     // 2.5) bare "#N" with no message content
     if (isBareTargetPrefix(trimmed)) {
@@ -500,6 +509,28 @@ export class Gateway {
    * an unanswered approval (the turn abort settles the approval as
    * 'cancelled' and the task can be resent with phone-side approvals).
    */
+  /** /status command: aggregate duty runtime facts into one phone-readable report. */
+  private async handleStatusCommand(): Promise<void> {
+    const snap = this.driver.status()
+    await this.sendChunked(this.strings.statusReport({
+      mode: this.mode === 'duty' ? this.strings.modeDuty : this.strings.modeLocal,
+      channelUp: this.channelUp,
+      inflight: this.inflight.size,
+      sessionId: snap.sessionId,
+      rotationCount: snap.rotationCount,
+      turns: snap.turnsOnDuty,
+      lastActivity: snap.busy
+        ? this.strings.statusRunning
+        : new Date(snap.lastActivityAt).toLocaleString('sv').replace('T', ' '),
+      busy: snap.busy,
+      contextTokens: snap.lastInputTokens === undefined ? 'n/a' : snap.lastInputTokens.toLocaleString('en-US'),
+      provider: snap.provider ?? '?',
+      model: snap.model ?? '?',
+      timeoutMinutes: snap.turnTimeoutMinutes,
+      startedAt: new Date(this.startedAt).toLocaleString('sv').replace('T', ' '),
+    }))
+  }
+
   private async handleUnblockCommand(): Promise<void> {
     let cancelled = 0
     for (const agent of this.ctx.agents.list()) {

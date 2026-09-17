@@ -47,6 +47,26 @@ export interface Strings {
   unblocked: (count: number) => string
   unblockNothing: string
   promptNote: string
+  modeDuty: string
+  modeLocal: string
+  statusReport: (s: StatusReportInput) => string
+}
+
+/** Inputs for the /status report formatter. */
+export interface StatusReportInput {
+  mode: string
+  channelUp: boolean
+  inflight: number
+  sessionId: string
+  rotationCount: number
+  turns: number
+  lastActivity: string
+  busy: boolean
+  contextTokens: string
+  provider: string
+  model: string
+  timeoutMinutes: number
+  startedAt: string
 }
 
 const zh: Strings = {
@@ -62,11 +82,25 @@ const zh: Strings = {
     '· 消息前加 #编号 → 只把这一条发给指定会话（如 #1 帮我看看进度）',
     '· /duty → 回到默认值班会话路由',
     '· /new → 開新值班 session（封存目前 session，帶交接摘要）',
+    '· /status → 目前值班狀態（模式/頻道/session/token/模型）',
     '· /unblock → 取消被审批卡住的回合（网页审批未处理时自救）',
     '· /away → 进入值守模式（审批转到手机）',
     '· /back → 回到本地模式（审批恢复网页弹窗）',
     '· 发消息即自动进入值守；回电脑在网页发条消息即自动切回本地',
     '· 审批回复格式：3 同意 / 3 拒绝',
+  ].join('\n'),
+  modeDuty: '🔔 值守（審批轉手機）',
+  modeLocal: '🖥 本地（審批網頁彈窗）',
+  statusReport: (s) => [
+    '📊 DSH 值班狀態',
+    `· 模式：${s.mode}`,
+    `· Telegram 頻道：${s.channelUp ? '✅ 正常' : '⚠️ 中斷'}（處理中訊息 ${s.inflight}）`,
+    `· 值班 session：${s.sessionId}（第 ${s.rotationCount} 次輪替，本輪 ${s.turns} 回合）`,
+    `· Agent：${s.busy ? '🏃 執行中' : '💤 閒置'}；最後活動：${s.lastActivity}`,
+    `· Context：~${s.contextTokens} tokens（最後一次輸入）`,
+    `· 模型：${s.provider} / ${s.model}`,
+    `· 回合逾時：${s.timeoutMinutes} 分鐘`,
+    `· 插件啟動：${s.startedAt}`,
   ].join('\n'),
   approvalQuestion: (id, toolName, reason, minutes) =>
     `【审批 #${id}】工具「${toolName}」请求批准${reason !== '' ? `：${reason}` : ''}\n回复 ${id} 同意 / ${id} 拒绝（${minutes} 分钟内有效）`,
@@ -127,11 +161,25 @@ const en: Strings = {
     '· Prefix a message with #N → send just that one to session N (e.g. #1 check my progress)',
     '· /duty → back to the default duty-session route',
     '· /new → start a fresh duty session (archives the current one, carries a handoff summary)',
+    '· /status → current duty status (mode/channel/session/tokens/model)',
     '· /unblock → cancel turns stuck on unanswered web approvals',
     '· /away → enter duty mode (approvals go to your phone)',
     '· /back → return to local mode (approvals stay in the web UI)',
     '· Any phone message switches to duty automatically; any web message switches back',
     '· Approval replies: 3 approve / 3 reject',
+  ].join('\n'),
+  modeDuty: '🔔 Duty (approvals on your phone)',
+  modeLocal: '🖥 Local (approvals in the web UI)',
+  statusReport: (s) => [
+    '📊 DSH Duty Status',
+    `· Mode: ${s.mode}`,
+    `· Telegram channel: ${s.channelUp ? '✅ up' : '⚠️ down'} (${s.inflight} message(s) in flight)`,
+    `· Duty session: ${s.sessionId} (rotation #${s.rotationCount}, ${s.turns} turns this cycle)`,
+    `· Agent: ${s.busy ? '🏃 running' : '💤 idle'}; last activity: ${s.lastActivity}`,
+    `· Context: ~${s.contextTokens} tokens (last recorded input)`,
+    `· Model: ${s.provider} / ${s.model}`,
+    `· Turn timeout: ${s.timeoutMinutes} min`,
+    `· Plugin started: ${s.startedAt}`,
   ].join('\n'),
   approvalQuestion: (id, toolName, reason, minutes) =>
     `[Approval #${id}] Tool "${toolName}" requests approval${reason !== '' ? `: ${reason}` : ''}\nReply ${id} approve / ${id} reject (valid ${minutes} min)`,
