@@ -24,11 +24,23 @@ export interface TelegramChat {
   type?: string
 }
 
+export interface TelegramPhotoSize {
+  file_id: string
+  file_unique_id?: string
+  width: number
+  height: number
+  file_size?: number
+}
+
 export interface TelegramMessage {
   message_id: number
   from?: TelegramUser
   chat: TelegramChat
   text?: string
+  /** Present when the message carries one or more photo variants. */
+  photo?: TelegramPhotoSize[]
+  /** Caption text attached to a photo (or media group item). */
+  caption?: string
 }
 
 export interface TelegramUpdate {
@@ -82,6 +94,13 @@ function request(url: string, agent: https.Agent, timeoutMs: number): Promise<{ 
 /** Telegram Bot API client scoped to one bot token. */
 export class TelegramClient {
   private readonly agent: https.Agent
+  /**
+   * Override hook for tests: replace the binary fetcher with a deterministic
+   * stub. In production this is `(...args) => https.request(...args)` and
+   * never reassigned.
+   */
+  public requestBinary: (...args: Parameters<typeof https.request>) => ReturnType<typeof https.request> =
+    (...args) => https.request(...args)
 
   constructor(
     private readonly token: string,
@@ -150,6 +169,16 @@ export class TelegramClient {
   /** Identity check (used at startup to validate token + proxy). */
   async getMe(): Promise<TelegramResponse<{ id: number; username?: string; first_name?: string }>> {
     return this.call<{ id: number; username?: string; first_name?: string }>('getMe', {}, 30_000)
+  }
+
+  /** The shared keep-alive agent, reused for file downloads (honors the proxy). */
+  get httpAgent(): https.Agent {
+    return this.agent
+  }
+
+  /** Bot token accessor for file-download URL construction (photo.ts). */
+  get botToken(): string {
+    return this.token
   }
 
   /** Close all pooled sockets (plugin teardown). */

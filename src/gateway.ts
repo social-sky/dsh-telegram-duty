@@ -26,6 +26,7 @@ import { scanPendingApprovals } from './pending.ts'
 import { sessionEventsOf } from './session-guard.ts'
 import { stringsFor } from './i18n.ts'
 import type { Strings } from './i18n.ts'
+import { downloadPhoto, largestPhotoSize } from './photo.ts'
 
 /** How often to re-send the typing indicator (Telegram shows it ~5 s). */
 export const TYPING_INTERVAL_MS = 4000
@@ -257,12 +258,18 @@ export class Gateway {
     }
     const message = update.message
     if (message === undefined) return
-    const text = message.text
-    if (text === undefined || text.trim() === '') return
     if (message.chat.id !== this.chatId()) {
       this.ctx.logger.info('telegram-duty', `ignoring message from chat ${message.chat.id} (whitelist is ${this.chatId()})`)
       return
     }
+    // 0.5) photo messages: download the largest variant, deliver image + text
+    // (caption, or the user's accompanying task text) into the duty session.
+    if (message.photo !== undefined && message.photo.length > 0) {
+      await this.handlePhotoMessage(message)
+      return
+    }
+    const text = message.text
+    if (text === undefined || text.trim() === '') return
     const trimmed = text.trim()
 
     // 1) approval answer
@@ -594,6 +601,45 @@ export class Gateway {
   /** The duty session and its rotated successors (-rN) never appear in listings. */
   private isDutySession(id: string): boolean {
     return id === this.dutyId || id.startsWith(`${this.dutyId}-r`)
+  }
+
+  /**
+   * Photo message path: download the largest variant, run the turn with the
+   * image + text (caption first, else the user's most recent text message in
+   * the last 2 minutes, else a default prompt). Mirrors the text-task flow:
+   * ack → duty mode → typing loop → outcome reply.
+   */
+  private async handlePhotoMessage(message: NonNullable<TelegramUpdate['message']>): Promise<void> {
+    const photoSize = largestPhotoSize(message.photo ?? [])
+    if (photoSize === undefined) return
+    await this.sendChunked(this.strings.ack)
+    await this.setMode('duty', true)
+    const typing = startTypingLoop(
+      (chatId, action) => this.client.sendChatAction(chatId, action),
+      this.chatId(),
+      TYPING_INTERVAL_MS,
+      message => this.ctx.logger.warn('telegram-duty', message),
+    )
+    let outcome: TurnOutcome
+    try {
+      const photo = await downloadPhoto(this.client, photoSize)
+      const targetId = this.targeting.activeId() ?? this.driver.currentDutySessionId()
+      outcome = await this.driver.runWithPhotoIn(targetId, photo, message.caption ?? '')
+    } catch (error) {
+      outcome = { text: '', error: error instanceof Error ? error.message : String(error) }
+    } finally {
+      typing.stop()
+    }
+    if (outcome.cancelled === true) return
+    if (outcome.error === TARGET_OFFLINE_ERROR) {
+      await this.sendChunked(this.strings.sessionOffline(this.driver.currentDutySessionId()))
+    } else if (outcome.error !== undefined) {
+      await this.sendChunked(this.strings.taskError(outcome.error))
+    } else if (outcome.text.trim() === '') {
+      await this.sendChunked(this.strings.dutyEmpty)
+    } else {
+      await this.sendChunked(outcome.text.trim())
+    }
   }
 
   private chatId(): number {
