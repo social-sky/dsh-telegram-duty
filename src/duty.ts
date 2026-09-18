@@ -25,6 +25,8 @@ import type { Agent, ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import type {} from '@deepseek-ai/dsh-system-prompt'
+import type {} from '@deepseek-ai/dsh-attachment'
+import type { ImageAttachmentRef, SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { TextBlock } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
@@ -196,15 +198,53 @@ export class SessionDriver {
     return await this.runIn(this.currentDutySessionId(), text)
   }
 
+  /**
+   * Queue one Telegram photo (plus its caption / accompanying text) into an
+   * arbitrary session. The image bytes are committed to the host attachment
+   * store (ctx.attachments) BEFORE the turn starts, then delivered as a
+   * durable ImageBlock riding the same user message as the text.
+   */
+  async runWithPhotoIn(
+    sessionId: string,
+    photo: { data: Uint8Array; mediaType: 'image/jpeg'; name: string },
+    text: string,
+  ): Promise<TurnOutcome> {
+    const attachments = this.ctx.get('attachments') as
+      | { saveImage: (input: SaveImageAttachment) => Promise<ImageAttachmentRef> }
+      | undefined
+    if (attachments === undefined) {
+      return { text: '', error: 'no attachment store is mounted in this dsh deployment' }
+    }
+    let ref: ImageAttachmentRef
+    try {
+      ref = await attachments.saveImage({ data: photo.data, mediaType: photo.mediaType, name: photo.name })
+    } catch (error) {
+      return { text: '', error: `image admission rejected the photo: ${error instanceof Error ? error.message : String(error)}` }
+    }
+    const content: Array<{ type: 'text'; text: string } | { type: 'image'; attachment: ImageAttachmentRef }> = [
+      { type: 'image', attachment: ref },
+    ]
+    if (text.trim() !== '') content.push({ type: 'text', text: text.trim() })
+    return await this.runContentIn(sessionId, content)
+  }
+
   /** Queue one Telegram text into an arbitrary session id. */
   async runIn(sessionId: string, text: string): Promise<TurnOutcome> {
+    return await this.runContentIn(sessionId, [{ type: 'text', text }])
+  }
+
+  /** Core delivery: one typed user message into an arbitrary session id. */
+  private async runContentIn(
+    sessionId: string,
+    content: Array<{ type: 'text'; text: string } | { type: 'image'; attachment: ImageAttachmentRef }>,
+  ): Promise<TurnOutcome> {
     let outcome: TurnOutcome = { text: '' }
     this.working = true
     const next = this.chain
       .catch(() => undefined)
       .then(async () => {
         try {
-          outcome = await this.turn(sessionId, text)
+          outcome = await this.turn(sessionId, content)
         } catch (error) {
           // Surface the failure as an outcome so the gateway can reply it.
           outcome = { text: '', error: error instanceof Error ? error.message : String(error) }
@@ -334,7 +374,10 @@ export class SessionDriver {
     }
   }
 
-  private async turn(sessionId: string, text: string): Promise<TurnOutcome> {
+  private async turn(
+    sessionId: string,
+    content: Array<{ type: 'text'; text: string } | { type: 'image'; attachment: ImageAttachmentRef }>,
+  ): Promise<TurnOutcome> {
     let isDuty = sessionId === this.currentDutySessionId()
     let attached = await this.attach(sessionId, isDuty)
     if (isDuty && !this.usageScanned) {
@@ -364,7 +407,7 @@ export class SessionDriver {
       await this.whenIdleBounded(agent, 'before the follow-up')
       const firstSeq = agent.session.seq
       agent.followup(createUserMessage({
-        content: [{ type: 'text', text }],
+        content,
         source: { kind: 'plugin', plugin: isDuty ? DUTY_SOURCE_PLUGIN : TARGETED_SOURCE_PLUGIN },
       }))
       await this.whenIdleBounded(agent, 'after the follow-up')
