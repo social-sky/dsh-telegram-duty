@@ -1,7 +1,7 @@
 {
   "name": "@social-sky/dsh-telegram-duty",
   "description": "Telegram duty gateway for DeepSeek Harness: long-poll Telegram into a dedicated duty session, global approval forwarding while on duty, and a local/duty watch toggle.",
-  "version": "0.5.2-new.2",
+  "version": "0.5.2-photo.1",
   "keywords": [
     "deepseek",
     "deepseek-harness",
@@ -71,6 +71,7 @@
     }
   },
   "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-agent": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-agent-default-model": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-agent-presets": "^0.1.0-rc.5",
@@ -83,8 +84,7 @@
     "@deepseek-ai/dsh-settings": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.5",
-    "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.5",
-    "@deepseek-ai/cordis": "^4.0.1"
+    "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.5"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1",
@@ -92,10 +92,12 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-agent": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-agent-default-model": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-agent-presets": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-api-remotes": "^0.1.0-rc.5",
+    "@deepseek-ai/dsh-attachment": "0.1.0-rc.8",
     "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.5",
@@ -105,7 +107,9 @@
     "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.5",
     "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.5",
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@types/react": "~18.3.1"
+    "@types/node": "^26.6.1",
+    "@types/react": "~18.3.1",
+    "typescript": "~5.6.3",
+    "vitest": "^5.0.1"
   }
 }
