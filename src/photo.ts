@@ -71,7 +71,10 @@ function fetchBinaryImpl(
   requester: (...args: Parameters<typeof https.request>) => ReturnType<typeof https.request>,
 ): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
-    const req = requester(url, { agent, method: 'GET' }, (res: IncomingMessage) => {
+    // family: 4 — the file host resolves to IPv6 that is unreachable on many
+    // deployments (ENETUNREACH); Node's Happy-Eyeballs then reports both
+    // attempts as an AggregateError even though IPv4 works. Pin v4.
+    const req = requester(url, { agent, method: 'GET', family: 4 }, (res: IncomingMessage) => {
       if (res.statusCode !== 200) {
         res.resume()
         reject(new Error(`photo download failed with HTTP ${res.statusCode}`))
@@ -102,9 +105,11 @@ function fetchBinaryImpl(
  * Download the largest variant of one Telegram photo as JPEG bytes.
  * Uses the client's agent so the download honors the deployment proxy.
  */
+/** One download attempt, with retries on network-level failures. */
 export async function downloadPhoto(
   client: TelegramClient,
   photo: TelegramPhotoSize,
+  attempts = 3,
 ): Promise<DownloadedPhoto> {
   const fileRes = await client.call<TelegramFile>('getFile', { file_id: photo.file_id }, 30_000)
   if (!fileRes.ok || fileRes.result?.file_path === undefined) {
@@ -112,13 +117,26 @@ export async function downloadPhoto(
   }
   // Undocumented-but-stable download host; path is bot-scoped.
   const url = `https://api.telegram.org/file/bot${client.botToken}/${fileRes.result.file_path}`
-  // Use the test-overridable seam so unit tests can stub the network layer
-  // without monkey-patching the global `node:https` module (which is sealed
-  // under ESM module namespaces).
-  const data = await fetchBinaryVia(client, url, client.httpAgent, MAX_PHOTO_BYTES)
-  return {
-    data,
-    mediaType: 'image/jpeg',
-    name: `telegram-photo-${photo.file_unique_id ?? photo.file_id.slice(-8)}.jpg`,
+  let lastError: unknown
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      // Use the test-overridable seam so unit tests can stub the network layer
+      // without monkey-patching the global `node:https` module (which is sealed
+      // under ESM module namespaces).
+      const data = await fetchBinaryVia(client, url, client.httpAgent, MAX_PHOTO_BYTES)
+      return {
+        data,
+        mediaType: 'image/jpeg',
+        name: `telegram-photo-${photo.file_unique_id ?? photo.file_id.slice(-8)}.jpg`,
+      }
+    } catch (error) {
+      lastError = error
+      // HTTP-status failures (non-200) are deterministic — don't retry those.
+      if (error instanceof Error && error.message.includes('HTTP ')) throw error
+      if (attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 2000))
+      }
+    }
   }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
