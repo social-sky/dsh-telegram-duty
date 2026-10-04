@@ -124,7 +124,7 @@ async function mount(ctx: Context, config: TelegramDutyConfig): Promise<void> {
   const gateway = new Gateway({ ctx, runtime, client, settings, stateOn, stateOff })
 
   ctx.effect(function* () {
-    ctx.on('approval/request', gateway.onApprovalRequest, { prepend: true })
+    ctx.on('approval/request', gateway.onApprovalRequest, { prepend: true, global: true })
     ctx.on('session/event', gateway.onSessionEvent)
     ctx.tools.register(telegramAskTool(gateway))
     ctx.tools.register(telegramNotifyTool(gateway))
