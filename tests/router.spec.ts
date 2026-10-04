@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chunkText, isBareTargetPrefix, parseCommand, parseSessionCallback, parseTargetPrefix } from '../src/router.ts'
+import { chunkText, isBareTargetPrefix, parseCommand, parseModelText, parseSessionCallback, parseTargetPrefix } from '../src/router.ts'
 import { stringsFor } from '../src/i18n.ts'
 
 describe('parseCommand', () => {
@@ -112,5 +112,25 @@ describe('help text', () => {
       expect(help).toContain('/sessions')
       expect(help).toContain('/duty')
     }
+  })
+})
+
+// --- parseModelText: bare number answering a fresh /models list ---
+
+describe('parseModelText', () => {
+  it('accepts a bare 1-based number', () => {
+    expect(parseModelText('3')).toEqual({ index: 3 })
+    expect(parseModelText(' 6 ')).toEqual({ index: 6 })
+    expect(parseModelText('12')).toEqual({ index: 12 })
+  })
+
+  it('rejects non-numeric, zero, negative and #N forms', () => {
+    expect(parseModelText('3 同意')).toBeNull()
+    expect(parseModelText('0')).toBeNull()
+    expect(parseModelText('-1')).toBeNull()
+    expect(parseModelText('#3')).toBeNull()
+    expect(parseModelText('三')).toBeNull()
+    expect(parseModelText('')).toBeNull()
+    expect(parseModelText('123')).toBeNull()
   })
 })

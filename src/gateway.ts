@@ -19,7 +19,7 @@ import type { TurnOutcome } from './duty.ts'
 import { ApprovalManager, parseApprovalCallback, parseApprovalReply } from './approval.ts'
 import { TelegramAskManager, parseAskCallback } from './ask.ts'
 import type { TelegramAskOutcome } from './ask.ts'
-import { chunkText, isBareTargetPrefix, parseCommand, parseModelCallback, parseSessionCallback, parseTargetPrefix } from './router.ts'
+import { chunkText, isBareTargetPrefix, parseCommand, parseModelCallback, parseModelText, parseSessionCallback, parseTargetPrefix } from './router.ts'
 import { Targeting, displayTitle } from './targeting.ts'
 import type { SessionItem } from './targeting.ts'
 import { scanPendingApprovals } from './pending.ts'
@@ -30,6 +30,9 @@ import { downloadPhoto, largestPhotoSize } from './photo.ts'
 
 /** How often to re-send the typing indicator (Telegram shows it ~5 s). */
 export const TYPING_INTERVAL_MS = 4000
+
+/** How long a bare number still answers the most recent /models list. */
+export const MODEL_PICK_WINDOW_MS = 5 * 60_000
 /**
  * Upper bound of numbered /sessions rows. Telegram caps a message at 100
  * buttons; 50 keeps the listing comfortably below that while covering any
@@ -111,6 +114,9 @@ export class Gateway {
   private channelUp = false
   /** Model list snapshot behind the current /models keyboard. */
   private modelOptions: Array<{ provider: string; model: string }> = []
+
+  /** When the current /models list was shown; 0 once consumed or never shown. */
+  private modelsShownAt = 0
   private mode: 'local' | 'duty'
 
   constructor(deps: GatewayDeps) {
@@ -349,6 +355,25 @@ export class Gateway {
       return
     }
 
+    // 2.4) bare number while the /models list is fresh: switch the default model
+    const modelText = parseModelText(trimmed)
+    if (modelText !== null
+      && this.modelOptions.length > 0
+      && Date.now() - this.modelsShownAt <= MODEL_PICK_WINDOW_MS
+      && modelText.index <= this.modelOptions.length) {
+      const selection = this.modelOptions[modelText.index - 1]
+      if (selection !== undefined) {
+        this.modelsShownAt = 0
+        try {
+          await this.saveModelSelection(selection)
+          await this.sendChunked(this.strings.modelSwitched(`${selection.provider} / ${selection.model}`))
+        } catch (error) {
+          await this.sendChunked(this.strings.taskError(error instanceof Error ? error.message : String(error)))
+        }
+        return
+      }
+    }
+
     // 2.5) bare "#N" with no message content
     if (isBareTargetPrefix(trimmed)) {
       await this.sendChunked(this.strings.prefixNeedsText)
@@ -560,6 +585,7 @@ export class Gateway {
     }
     const snap = this.driver.status()
     this.modelOptions = allowed
+    this.modelsShownAt = Date.now()
     const lines = allowed.map((m, index) => {
       const mark = m.provider === snap.provider && m.model === snap.model ? '  ✓' : ''
       return `[${index + 1}] ${m.provider} / ${m.model}${mark}`
