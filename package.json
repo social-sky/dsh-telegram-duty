@@ -56,7 +56,10 @@
     "typecheck": "tsc -b tsconfig.json --force && tsc -b tsconfig.client.json --force",
     "test": "node --test tests/session-guard.test.mjs",
     "check": "node scripts/check-compat.mjs && node --test tests/session-guard.test.mjs",
-    "build:client": "node scripts/build-client.mjs"
+    "build:client": "node scripts/build-client.mjs",
+    "build:lib": "rolldown -c rolldown.config.mjs",
+    "build:standalone": "npm run build:lib && node scripts/build-client.mjs",
+    "prepare": "npm run build:standalone"
   },
   "dsh": {
     "bundle": {
@@ -109,6 +112,7 @@
     "@deepseek-ai/dsh-user-approval": "^0.1.0-rc.5",
     "@types/node": "^26.6.1",
     "@types/react": "~18.3.1",
+    "rolldown": "^1.2.12",
     "typescript": "~5.6.3",
     "vitest": "^5.0.1"
   }
