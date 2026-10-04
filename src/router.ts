@@ -51,6 +51,15 @@ export function parseModelCallback(data: string): { index: number } | null {
   return { index }
 }
 
+/** Parse a bare number that answers a recently shown /models list. */
+export function parseModelText(text: string): { index: number } | null {
+  const match = /^(\d{1,2})$/.exec(text.trim())
+  if (match === null) return null
+  const index = Number(match[1])
+  if (!Number.isSafeInteger(index) || index < 1) return null
+  return { index }
+}
+
 /** True for a bare `#N` with no message content (needs a dedicated hint). */
 export function isBareTargetPrefix(text: string): boolean {
   return /^#\s*\d+\s*$/.test(text.trim())
