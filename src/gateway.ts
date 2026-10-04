@@ -533,7 +533,27 @@ export class Gateway {
     const section = settings?.section?.('subagent-model-selection') as
       | { allowedModels?: Array<{ provider: string; model: string }> }
       | undefined
-    const allowed = section?.allowedModels ?? []
+    let allowed = section?.allowedModels ?? []
+    if (allowed.length === 0) {
+      // Legacy-shim fallback: older hosts keep per-namespace settings in a
+      // JSON store under $DSH_HOME/storages/settings-legacy and expose no
+      // `section()` accessor, so `allowedModels` reads back empty. Read the
+      // persisted store directly rather than showing an empty catalog.
+      try {
+        const { existsSync, readFileSync } = await import('node:fs')
+        const { join } = await import('node:path')
+        const home = process.env.DSH_HOME ?? join(process.env.HOME ?? '', '.dsh')
+        const store = join(home, 'storages', 'settings-legacy', 'subagent-model-selection.json')
+        if (existsSync(store)) {
+          const parsed = JSON.parse(readFileSync(store, 'utf-8')) as {
+            allowedModels?: Array<{ provider: string; model: string }>
+          }
+          allowed = parsed.allowedModels ?? []
+        }
+      } catch {
+        // Unreadable or malformed store — fall through to the empty-catalog path.
+      }
+    }
     if (allowed.length === 0) {
       await this.sendChunked(this.strings.modelsNone)
       return
