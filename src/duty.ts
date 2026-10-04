@@ -51,6 +51,20 @@ import {
 export const DUTY_SOURCE_PLUGIN = 'telegram-duty'
 export const TARGETED_SOURCE_PLUGIN = 'telegram-duty-targeted'
 
+declare module '@deepseek-ai/dsh-llm' {
+  /**
+   * dsh-llm's MessageSourceMap is a merge-extensible sum: each producer
+   * declares its own `kind` rather than sharing a catch-all. dsh 0.1.x also
+   * shipped a generic `plugin` variant that 0.2.0 removed, so declare both of
+   * our kinds here to typecheck against either line. Nothing validates the
+   * discriminator at runtime — the value is a label the UI reads.
+   */
+  interface MessageSourceMap {
+    'telegram-duty': { kind: typeof DUTY_SOURCE_PLUGIN }
+    'telegram-duty-targeted': { kind: typeof TARGETED_SOURCE_PLUGIN }
+  }
+}
+
 export interface TurnOutcome {
   text: string
   /** Non-empty when the turn ended abnormally ('OFFLINE' = target cannot wake). */
@@ -408,7 +422,10 @@ export class SessionDriver {
       const firstSeq = agent.session.seq
       agent.followup(createUserMessage({
         content,
-        source: { kind: 'plugin', plugin: isDuty ? DUTY_SOURCE_PLUGIN : TARGETED_SOURCE_PLUGIN },
+        // Each producer declares its OWN `kind` in its own module — dsh-llm's
+        // MessageSourceMap is a merge-extensible sum with no catch-all
+        // 'plugin' variant, so the discriminator carries the plugin name.
+        source: { kind: isDuty ? DUTY_SOURCE_PLUGIN : TARGETED_SOURCE_PLUGIN },
       }))
       await this.whenIdleBounded(agent, 'after the follow-up')
       // O(log n + delta): slice the tail at firstSeq instead of rescanning the
